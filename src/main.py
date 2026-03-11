@@ -13,6 +13,9 @@ from core.context.chat_store import ChatStore
 from core.context.manager import ContextManager
 from core.context.modules.system_prompt import SystemPromptContext
 from core.tool.manager import ToolManager
+from core.tool.scheduler import ToolScheduler, ToolSchedulerConfig
+from core.tool.approval import ApprovalStore
+from core.tool.types import ApprovalMode
 from core.tool.feishu.client import FeishuClient
 from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
@@ -26,6 +29,7 @@ from channels.registry import register_channel
 
 from api.app import create_app
 from api.routes.chat import set_agent
+from api.routes.card_callback import set_approval_store
 
 
 async def startup() -> None:
@@ -81,16 +85,30 @@ async def startup() -> None:
     )
     logger.info("ContextManager created")
 
-    # 7. Agent
+    # 7. Approval Store + Tool Scheduler
+    approval_store = ApprovalStore()
+    set_approval_store(approval_store)
+
+    scheduler_config = ToolSchedulerConfig(
+        approval_mode=ApprovalMode.YOLO,
+    )
+    scheduler = ToolScheduler(
+        tool_manager=tool_manager,
+        approval_store=approval_store,
+        config=scheduler_config,
+    )
+    logger.info("ToolScheduler created (mode=%s)", scheduler_config.approval_mode.value)
+
+    # 8. Agent
     agent = SimpleAgent(
         llm=llm,
         context_manager=context_manager,
-        tool_manager=tool_manager,
+        scheduler=scheduler,
     )
     set_agent(agent)
     logger.info("SimpleAgent created")
 
-    # 8. Feishu Channel
+    # 9. Feishu Channel
     async def on_message(text: str, chat_id: str, open_id: str) -> str:
         return await agent.run(text, chat_id, open_id)
 
@@ -102,6 +120,13 @@ async def startup() -> None:
     await channel.connect()
     register_channel(channel)
     logger.info("FeishuChannel connected (p2p single-chat)")
+
+    # 10. 注入 send_card 回调给 Scheduler（channel 准备好后）
+    async def send_card(chat_id: str, card_json: str) -> None:
+        await channel.send_message(chat_id, card_json, msg_type="interactive")
+
+    scheduler._send_card = send_card
+    logger.info("Scheduler send_card callback attached")
 
     logger.info("=== PineClaw ready ===")
 

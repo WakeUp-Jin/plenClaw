@@ -9,7 +9,7 @@ from utils.token_counter import TokenCounter
 if TYPE_CHECKING:
     from core.llm.services.base import BaseLLMService
     from core.context.manager import ContextManager
-    from core.tool.manager import ToolManager
+    from core.tool.scheduler import ToolScheduler
 
 CLEAR_COMMANDS = {"清空聊天记录", "清空历史记录", "清空对话", "/clear"}
 
@@ -19,12 +19,12 @@ class SimpleAgent:
         self,
         llm: BaseLLMService,
         context_manager: ContextManager,
-        tool_manager: ToolManager,
+        scheduler: ToolScheduler,
         token_counter: TokenCounter | None = None,
     ):
         self._llm = llm
         self._ctx = context_manager
-        self._tools = tool_manager
+        self._scheduler = scheduler
         self._token_counter = token_counter or TokenCounter()
 
     @property
@@ -40,10 +40,10 @@ class SimpleAgent:
         self._ctx.append_message({"role": "user", "content": user_text})
 
         messages = self._ctx.get_context()
-        tools = self._tools.get_formatted_tools()
+        tools = self._scheduler.tool_manager.get_formatted_tools()
 
         response_text, usage, tool_messages = await execute_tool_loop(
-            self._llm, messages, tools, self._tools
+            self._llm, messages, tools, self._scheduler, chat_id=chat_id,
         )
 
         self._token_counter.add(usage.prompt_tokens, usage.completion_tokens)

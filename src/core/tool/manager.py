@@ -17,14 +17,21 @@ class ToolManager:
         definition: dict[str, Any],
         handler: Callable[[dict[str, Any]], Awaitable[str]],
         category: str = "general",
+        is_read_only: bool = False,
+        should_confirm: bool | None = None,
     ) -> None:
         self._tools[name] = InternalTool(
             name=name,
             definition=definition,
             handler=handler,
             category=category,
+            is_read_only=is_read_only,
+            should_confirm=should_confirm,
         )
         logger.debug("Registered tool: %s [%s]", name, category)
+
+    def get_tool(self, name: str) -> InternalTool | None:
+        return self._tools.get(name)
 
     async def execute(self, name: str, arguments: str | dict) -> str:
         tool = self._tools.get(name)

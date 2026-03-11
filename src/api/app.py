@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import health, chat, webhook
+from api.routes import health, chat, webhook, card_callback
 
 
 def create_app() -> FastAPI:
@@ -22,5 +22,6 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(webhook.router)
+    app.include_router(card_callback.router)
 
     return app
