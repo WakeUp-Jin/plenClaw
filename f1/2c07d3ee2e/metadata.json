@@ -1,0 +1,21 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "f12c07d3ee2e",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "pyproject.toml",
+    "src/main.py",
+    "uv.lock"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f1/2c07d3ee2e/0/metadata.json",
+      "transcript": "/f1/2c07d3ee2e/0/full.jsonl",
+      "context": "/f1/2c07d3ee2e/0/context.md",
+      "content_hash": "/f1/2c07d3ee2e/0/content_hash.txt",
+      "prompt": "/f1/2c07d3ee2e/0/prompt.txt"
+    }
+  ]
+}

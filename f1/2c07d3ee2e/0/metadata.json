@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "f12c07d3ee2e",
+  "session_id": "05dd24df-7059-458e-be03-30941a2f78a9",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-15T12:16:16.247829Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "pyproject.toml",
+    "src/main.py",
+    "uv.lock"
+  ],
+  "agent": "Cursor",
+  "turn_id": "1fb3273e2fc5",
+  "initial_attribution": {
+    "calculated_at": "2026-03-15T12:16:16.229392Z",
+    "agent_lines": 15,
+    "human_added": 4718,
+    "human_modified": 3,
+    "human_removed": 0,
+    "total_committed": 4736,
+    "agent_percentage": 0.31672297297297297
+  }
+}
