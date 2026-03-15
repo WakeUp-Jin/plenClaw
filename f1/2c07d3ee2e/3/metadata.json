@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "f12c07d3ee2e",
+  "session_id": "ce39596e-540a-4fc2-8a8d-4f5b9cd11c3e",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-15T12:16:16.359839Z",
+  "branch": "main",
+  "checkpoints_count": 30,
+  "files_touched": [
+    "docs/Learn/Python多线程threading笔记.md",
+    "docs/Learn/Python异步编程asyncio笔记.md",
+    "pyproject.toml",
+    "src/api/app.py",
+    "src/channels/feishu/channel.py",
+    "src/main.py",
+    "uv.lock"
+  ],
+  "agent": "Claude Code",
+  "turn_id": "83151fa4a4ff",
+  "token_usage": {
+    "input_tokens": 96,
+    "cache_creation_tokens": 511542,
+    "cache_read_tokens": 1213047,
+    "output_tokens": 29531,
+    "api_call_count": 36
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-15T12:16:16.31558Z",
+    "agent_lines": 524,
+    "human_added": 4213,
+    "human_modified": 1,
+    "human_removed": 0,
+    "total_committed": 4738,
+    "agent_percentage": 11.059518784297172
+  }
+}
