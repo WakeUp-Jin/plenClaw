@@ -1,0 +1,17 @@
+[Image]
+<attached_files>
+
+<code_selection path="/Users/xjk/Desktop/ScriptCode/PineClaw/src/channels/feishu/channel.py" lines="28-29">
+    28|        self._on_message = on_message
+    29|
+</code_selection>
+
+</attached_files>
+<image_files>
+The following images were provdied by the user and saved to the workspace for future use:
+1. /Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/assets/image-1b6b08a6-b808-4c22-91a0-b9242aeddaa7.png
+
+These images can be copied for use in other locations.
+</image_files>
+
+@channel.py (28-29) 这里有一些类型的噪音存在，我觉得好难看 像name:str="feishu"，为什么会有这么严格的类型检查，是因为basedright存在的吗？我原本只想有一下调整，依赖导入的跳转，但是pylance，不能在cursor中使用，所以安装了这个插件，但是现在搞得我有点烦
