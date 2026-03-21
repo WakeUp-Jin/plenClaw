@@ -1,0 +1,445 @@
+/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm
+
+这个项目的LLM模块需要重构，按照这个Agent 的Skill的规范去重构建，也就是ce-llm-module的要求去重新构建
+
+我们一起规范一下这个吧，还有这里面会涉及到日志记录模块怎么构建，也一起做了，还有配置文件，这个项目启动肯定会需要一个config的配置文件的，里面的参数需要一起定义，我觉得给模型分为，高，中，低，然后高中模型默认使用kimi-2.5，低模型使用火山引擎的Doubao-Seed-2.0-lite，因为快还便宜，所以llm模块里面需要支持两个类，一个是kimi的LLM服务类，一个是火山引擎的服务类，同时创建工厂中，需要提供三种方法，获取高模型，中模型，低模型，之后其他的地方可以直接使用，你觉得呢？而配置文件的初始化加载，我们看看要不要单独写一个类，在项目启动的时候初始化加载配置文件进来，成为一个配置类，之后全局就可以随便读取，开始分析吧
+
+---
+
+config文件是json格式的，在utils文件夹中提供一个辅助方法，/**
+ * 提取 API Key
+ *
+ * 优先级（从高到低）：
+ * 1. 用户传递的 config.apiKey（必须，由 ConfigService 提供）
+ * 2. 无需 API Key 的提供商返回占位符
+ *
+ * 注意：新架构中，API Key 应该由 ConfigService 在调用 createLLMService 前解析好
+ *
+ * @param config - LLM 配置
+ * @returns API Key 字符串
+ */
+export function extractApiKey(config: LLMConfig): string {
+  const provider = config.provider.toLowerCase();
+
+  // 无需 API Key 的提供商
+  if (['ollama', 'lmstudio', 'aws'].includes(provider)) {
+    return 'not-required';
+  }
+
+  // 使用传入的 API Key（应该由 ConfigService 提供）
+  if (config.apiKey) {
+    return config.apiKey;
+  }
+
+  // 没有 API Key，抛出错误
+  throw new Error(
+    `API key not found for provider "${provider}". ` +
+      `Please configure your API key in ~/.reason-code/config.json`
+  );
+}
+
+/**
+ * 获取提供商的 Base URL
+ *
+ * 优先级（从高到低）：
+ * 1. 用户传递的 config.baseURL（显式配置）
+ * 2. 环境变量中的配置（通过 provider 自动查找）
+ * 3. 硬编码的默认 Base URL
+ *
+ * @param config - LLM 配置
+ * @returns Base URL 字符串
+ *
+ */
+export function getBaseURL(config: LLMConfig): string {
+  // 1. 优先使用用户传递的 baseURL
+  if (config.baseURL) {
+    return config.baseURL;
+  }
+
+  const provider = config.provider.toLowerCase();
+
+  // 3. 硬编码的默认 Base URL（兜底）
+  const defaultBaseURLs: Record<string, string> = {
+    deepseek: 'https://api.deepseek.com',
+    openai: 'https://api.openai.com/v1',
+    anthropic: 'https://api.anthropic.com',
+    siliconflow: 'https://api.siliconflow.cn/v1',
+    qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    openrouter: 'https://openrouter.ai/api/v1',
+    ollama: 'http://localhost:11434/v1',
+    lmstudio: 'http://localhost:1234/v1',
+  };
+
+  const baseURL = defaultBaseURLs[provider];
+  if (!baseURL) {
+    throw new Error(
+      `No base URL found for provider "${provider}". ` +
+        `Please pass baseURL in config: { provider: '${provider}', model: '...', baseURL: 'https://...' }`
+    );
+  }
+
+  return baseURL;
+}
+
+/** 获取默认上下文窗口大小 */
+export function getDefaultContextWindow(provider: string, model?: string): number {
+  const defaults: Record<string, Record<string, number>> = {
+    openai: {
+      'gpt-4o': 128000,
+      'gpt-4': 8192,
+      'gpt-3.5-turbo': 16385,
+      default: 8192,
+    },
+    anthropic: { default: 200000 },
+    gemini: { default: 1000000 },
+    deepseek: { default: 128000 },
+    ollama: { default: 8192 },
+  };
+
+  const providerDefaults = defaults[provider.toLowerCase()] || {
+    default: 8192,
+  };
+  return providerDefaults[model || 'default'] || providerDefaults.default;
+}
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/llm%E6%A8%A1%E5%9D%97%E9%87%8D%E6%9E%84%E8%AE%A1%E5%88%92_b3792997.plan.md" lines="1-323">
+     1|---
+     2|name: LLM模块重构计划
+     3|overview: 按照 ce-llm-module Skill 规范，重构 PineClaw 项目的 LLM 模块，新增 Kimi 和火山引擎两个服务类，实现 ModelTier (HIGH/MEDIUM/LOW) 三级工厂模式，同时重构配置系统和日志模块。
+     4|todos:
+     5|  - id: config-system
+     6|    content: 重构配置系统：新建 config.json 模板，重写 AppConfig 类实现 JSON 加载 + 环境变量替换 + 全局单例
+     7|    status: pending
+     8|  - id: logger-enhance
+     9|    content: 增强日志模块：支持模块级 logger (get_logger)，改进格式化输出
+    10|    status: pending
+    11|  - id: llm-types
+    12|    content: 扩展 LLM 类型定义：新增 ModelTier 枚举、扩展 LLMConfig/LLMResponse/ILLMService
+    13|    status: pending
+    14|  - id: llm-base
+    15|    content: 增强 BaseLLMService：添加 simpleChat 默认实现、重试机制 (complete_with_retry)
+    16|    status: pending
+    17|  - id: kimi-service
+    18|    content: 实现 KimiService：Moonshot/Kimi-K2.5 服务类，处理 Kimi 特有参数
+    19|    status: pending
+    20|  - id: volcengine-service
+    21|    content: 实现 VolcEngineService：火山引擎/Doubao 服务类，处理火山引擎特有参数
+    22|    status: pending
+    23|  - id: llm-factory-registry
+    24|    content: 重写 factory.py 和新建 registry.py：工厂函数支持新 provider，Registry 按 ModelTier 缓存
+    25|    status: pending
+    26|  - id: caller-adapt
+    27|    content: 适配调用方：main.py 用 Registry 初始化，SimpleAgent 支持多模型（主循环用 HIGH，压缩用 LOW）
+    28|    status: pending
+    29|  - id: llm-helpers
+    30|    content: 新建 utils/llm_helpers.py：实现 extract_api_key、get_base_url、get_default_context_window 辅助函数
+    31|    status: pending
+    32|  - id: deps-configs
+    33|    content: 更新 pyproject.toml 依赖、.env.example、新建 config.json 模板
+    34|    status: pending
+    35|isProject: false
+    36|---
+    37|
+    38|# LLM 模块、配置系统与日志模块重构计划
+    39|
+    40|## 现状分析
+    41|
+    42|当前 LLM 模块存在以下问题：
+    43|
+    44|- 只有一个 `OpenAIService` 服务类，所有供应商都走同一个类
+    45|- 工厂函数 `create_llm_service` 只做简单的 provider 映射，没有 ModelTier 分层
+    46|- 配置类 `Settings` 只支持单个 LLM 配置（一个 provider/model/api_key）
+    47|- 缺少 `simpleChat` 便捷方法
+    48|- 缺少重试机制
+    49|- 日志模块过于简单，缺少结构化输出和模块级别控制
+    50|
+    51|## 架构设计
+    52|
+    53|### 模型分层策略
+    54|
+    55|- **HIGH**：核心推理、Agent 主循环 → 默认 `kimi-k2.5`（Moonshot）
+    56|- **MEDIUM**：历史压缩、摘要等辅助任务 → 默认 `kimi-k2.5`（Moonshot）
+    57|- **LOW**：简单分类、格式化等低成本任务 → 默认 `Doubao-Seed-2.0-lite`（火山引擎，快且便宜）
+    58|
+    59|两个供应商均兼容 OpenAI SDK，base_url 不同：
+    60|
+    61|- Kimi: `https://api.moonshot.cn/v1`
+    62|- 火山引擎: `https://ark.cn-beijing.volces.com/api/v3`
+    63|
+    64|### 重构后目录结构
+    65|
+    66|```
+    67|config.json                      # 项目配置文件 (JSON 格式)
+    68|.env                             # 仅存放敏感 API Key
+    69|src/
+    70|├── config/
+    71|│   ├── __init__.py              # 导出 config (AppConfig 单例)
+    72|│   └── settings.py              # AppConfig 类：JSON 加载 + 环境变量替换 + 全局单例
+    73|├── utils/
+    74|│   ├── __init__.py
+    75|│   ├── logger.py                # 增强日志模块
+    76|│   
+    77|└── core/
+    78|    └── llm/
+    79|        ├── __init__.py          # 导出核心接口
+    80|        ├── types.py             # 统一类型：LLMConfig, LLMResponse, ToolCall, ModelTier
+    81|        ├── factory.py           # create_llm_service 工厂函数
+    82|        ├── registry.py          # LLMServiceRegistry (按 ModelTier 缓存)
+    83|        ├── services/
+    84|        │   ├── __init__.py
+    85|        │   ├── base.py          # BaseLLMService (含 complete + simpleChat + 重试)
+    86|        │   ├── kimi_service.py  # KimiService (Moonshot/Kimi-K2.5)
+    87|        │   └── volcengine_service.py  # VolcEngineService (火山引擎/Doubao)
+    88|        └── utils/
+    89|            └── tool_loop.py     # 保持不变
+    90|            └── llm_helpers.py           # LLM 辅助函数 (extract_api_key, get_base_url 等
+    91|```
+    92|
+    93|---
+    94|
+    95|## 一、配置系统重构
+    96|
+    97|### 1.1 配置文件格式
+    98|
+    99|新增 JSON 配置文件 `config.json`（项目根目录），替代纯 .env 的方式。.env 仅保留敏感的 API Key。
+   100|
+   101|```json
+   102|{
+   103|  "app": {
+   104|    "log_level": "INFO",
+   105|    "sqlite_db_path": "./data/pineclaw.db"
+   106|  },
+   107|  "feishu": {
+   108|    "app_id": "${FEISHU_APP_ID}",
+   109|    "app_secret": "${FEISHU_APP_SECRET}",
+   110|    "verification_token": "${FEISHU_VERIFICATION_TOKEN}",
+   111|    "encrypt_key": "${FEISHU_ENCRYPT_KEY}",
+   112|    "memory_folder_name": "PineClaw"
+   113|  },
+   114|  "llm": {
+   115|    "models": {
+   116|      "high": {
+   117|        "provider": "kimi",
+   118|        "model": "kimi-k2.5",
+   119|        "api_key": "${KIMI_API_KEY}",
+   120|        "base_url": "https://api.moonshot.cn/v1",
+   121|        "temperature": 0.7,
+   122|        "max_tokens": 4096
+   123|      },
+   124|      "medium": {
+   125|        "provider": "kimi",
+   126|        "model": "kimi-k2.5",
+   127|        "api_key": "${KIMI_API_KEY}",
+   128|        "base_url": "https://api.moonshot.cn/v1",
+   129|        "temperature": 0.7,
+   130|        "max_tokens": 4096
+   131|      },
+   132|      "low": {
+   133|        "provider": "volcengine",
+   134|        "model": "doubao-seed-2.0-lite",
+   135|        "api_key": "${VOLCENGINE_API_KEY}",
+   136|        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+   137|        "temperature": 0.7,
+   138|        "max_tokens": 2048
+   139|      }
+   140|    },
+   141|    "retry": {
+   142|      "max_retries": 3,
+   143|      "base_delay": 1.0,
+   144|      "max_delay": 30.0
+   145|    }
+   146|  },
+   147|  "chat": {
+   148|    "history_dir": "./data/chat_history",
+   149|    "max_token_estimate": 60000,
+   150|    "compress_keep_ratio": 0.3
+   151|  }
+   152|}
+   153|```
+   154|
+   155|### 1.2 AppConfig 单例类
+   156|
+   157|重写 `[src/config/settings.py](src/config/settings.py)`：
+   158|
+   159|- 使用 `pydantic` BaseModel 做类型验证（不再用 pydantic-settings 直接绑定 env）
+   160|- 启动时加载 `config.json`，对 `${VAR}` 占位符从环境变量/`.env` 中递归替换
+   161|- 提供全局单例 `config` 供各模块直接 import
+   162|- 提供 `get_llm_config(tier: ModelTier) -> LLMConfig` 便捷方法
+   163|- 无需额外依赖（Python 标准库 `json` 模块即可）
+   164|
+   165|---
+   166|
+   167|## 二、日志模块增强
+   168|
+   169|重写 `[src/utils/logger.py](src/utils/logger.py)`：
+   170|
+   171|- 支持模块级 logger：`get_logger(name)` 返回 `pineclaw.{name}` 子 logger
+   172|- 格式化输出增加模块名：`[2026-03-21 10:00:00] INFO pineclaw.llm - message`
+   173|- 在配置中读取 `log_level`
+   174|- 保持向后兼容：`from utils import logger` 仍然可用
+   175|
+   176|---
+   177|
+   178|## 2.5、LLM 辅助函数
+   179|
+   180|新建 `[src/core/llm/utils/llm_helpers.py](src/utils/llm_helpers.py)`，提供工厂函数和服务类使用的辅助方法：
+   181|
+   182|- `**extract_api_key(config: LLMConfig) -> str**`
+   183|  - 优先使用 config 中已有的 api_key（由 AppConfig 在加载时解析好）
+   184|  - 对无需 API Key 的供应商（如 ollama、lmstudio）返回占位符 `"not-required"`
+   185|  - 缺少 api_key 时抛出明确的错误信息
+   186|- `**get_base_url(config: LLMConfig) -> str**`
+   187|  - 优先使用 config 中显式配置的 base_url
+   188|  - 否则按 provider 查找硬编码的默认 URL 映射表（kimi、volcengine、deepseek、openai 等）
+   189|  - 找不到时抛出明确错误
+   190|- `**get_default_context_window(provider: str, model: str | None = None) -> int**`
+   191|  - 根据供应商和模型名返回默认上下文窗口大小
+   192|  - 用于上下文管理时估算 token 上限
+   193|
+   194|默认 Base URL 映射表（Python 版本）：
+   195|
+   196|```python
+   197|DEFAULT_BASE_URLS: dict[str, str] = {
+   198|    "kimi": "https://api.moonshot.cn/v1",
+   199|    "volcengine": "https://ark.cn-beijing.volces.com/api/v3",
+   200|    "deepseek": "https://api.deepseek.com",
+   201|    "openai": "https://api.openai.com/v1",
+   202|    "anthropic": "https://api.anthropic.com",
+   203|    "siliconflow": "https://api.siliconflow.cn/v1",
+   204|    "qwen": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+   205|    "openrouter": "https://openrouter.ai/api/v1",
+   206|    "ollama": "http://localhost:11434/v1",
+   207|    "lmstudio": "http://localhost:1234/v1",
+   208|}
+   209|```
+   210|
+   211|---
+   212|
+   213|## 三、LLM 模块重构
+   214|
+   215|### 3.1 类型定义 (`[src/core/llm/types.py](src/core/llm/types.py)`)
+   216|
+   217|扩展现有类型：
+   218|
+   219|```python
+   220|from enum import Enum
+   221|
+   222|class ModelTier(str, Enum):
+   223|    HIGH = "high"
+   224|    MEDIUM = "medium"
+   225|    LOW = "low"
+   226|```
+   227|
+   228|- `LLMConfig` 增加 `max_retries` 字段
+   229|- `LLMResponse` 增加 `finish_reason` 字段
+   230|- `ILLMService` Protocol 增加 `simpleChat` 方法签名
+   231|
+   232|### 3.2 BaseLLMService (`[src/core/llm/services/base.py](src/core/llm/services/base.py)`)
+   233|
+   234|增强基类：
+   235|
+   236|- 新增 `simpleChat(user_input, system_prompt)` 的默认实现（内部调用 complete）
+   237|- 新增 `complete_with_retry` 重试方法（指数退避 + 随机抖动）
+   238|- 新增 `_is_retryable_error` 判断方法（429/5xx 可重试，400/401 不重试）
+   239|- 各子类只需实现 `_do_complete` 内部方法
+   240|
+   241|### 3.3 KimiService (`[src/core/llm/services/kimi_service.py](src/core/llm/services/kimi_service.py)`)
+   242|
+   243|- 使用 OpenAI SDK，base_url 指向 `https://api.moonshot.cn/v1`
+   244|- 模型名: `kimi-k2.5`
+   245|- 处理 Kimi 特有的 usage 字段（如 context caching）
+   246|
+   247|### 3.4 VolcEngineService (`[src/core/llm/services/volcengine_service.py](src/core/llm/services/volcengine_service.py)`)
+   248|
+   249|- 使用 OpenAI SDK，base_url 指向 `https://ark.cn-beijing.volces.com/api/v3`
+   250|- 模型名: `doubao-seed-2.0-lite`
+   251|- 处理火山引擎特有的参数（如 reasoning_effort）
+   252|
+   253|### 3.5 工厂函数 (`[src/core/llm/factory.py](src/core/llm/factory.py)`)
+   254|
+   255|```python
+   256|def create_llm_service(config: LLMConfig) -> BaseLLMService:
+   257|    providers = {
+   258|        "kimi": KimiService,
+   259|        "volcengine": VolcEngineService,
+   260|        "openai": OpenAIService,   # 保留向后兼容
+   261|    }
+   262|    ...
+   263|```
+   264|
+   265|### 3.6 LLMServiceRegistry (`[src/core/llm/registry.py](src/core/llm/registry.py)`)
+   266|
+   267|按 ce-llm-module Skill 规范实现：
+   268|
+   269|- 按 `ModelTier` 缓存服务实例（延迟创建、单例）
+   270|- 提供 `get_high()`, `get_medium()`, `get_low()` 三个便捷方法
+   271|- 配置变更时自动失效缓存
+   272|- 从 `AppConfig` 读取对应 tier 的 LLM 配置
+   273|
+   274|---
+   275|
+   276|## 四、调用方适配
+   277|
+   278|### 4.1 main.py 启动流程
+   279|
+   280|重写 `[src/main.py](src/main.py)` 中 LLM 初始化部分：
+   281|
+   282|- 创建 `LLMServiceRegistry` 单例
+   283|- Agent 使用 `registry.get_high()` 获取主力模型
+   284|- 历史压缩使用 `registry.get_low()` 获取低成本模型
+   285|
+   286|### 4.2 SimpleAgent 压缩功能
+   287|
+   288|修改 `[src/core/agent/simple_agent.py](src/core/agent/simple_agent.py)`：
+   289|
+   290|- 接收 `LLMServiceRegistry` 而非单个 `BaseLLMService`
+   291|- 主循环用 `registry.get_high()`
+   292|- `_compress_history` 用 `registry.get_low()`
+   293|
+   294|---
+   295|
+   296|## 五、依赖与配置文件
+   297|
+   298|- `pyproject.toml`：可移除 `pydantic-settings` 依赖（改用 pydantic BaseModel + 自定义 JSON 加载），无需新增依赖
+   299|- `.env.example`：更新为只保留 API Key（KIMI_API_KEY、VOLCENGINE_API_KEY、FEISHU_* 等）
+   300|- 新增 `config.json`：项目配置模板文件
+   301|
+   302|---
+   303|
+   304|## 数据流
+   305|
+   306|```mermaid
+   307|graph TD
+   308|    ConfigJSON["config.json"] --> AppConfig["AppConfig 单例"]
+   309|    DotEnv[".env (API Keys)"] --> AppConfig
+   310|    AppConfig --> Registry["LLMServiceRegistry"]
+   311|    Registry --> Factory["create_llm_service 工厂"]
+   312|    Factory --> Helpers["llm_helpers (extract_api_key / get_base_url)"]
+   313|    Registry -->|"get_high()"| KimiHigh["KimiService (HIGH)"]
+   314|    Registry -->|"get_medium()"| KimiMed["KimiService (MEDIUM)"]
+   315|    Registry -->|"get_low()"| VolcLow["VolcEngineService (LOW)"]
+   316|    KimiHigh --> Agent["SimpleAgent 主循环"]
+   317|    VolcLow --> Compress["历史压缩/摘要"]
+   318|    AppConfig --> Logger["Logger 模块"]
+   319|```
+   320|
+   321|
+   322|
+   323|
+</code_selection>
+
+</attached_files>
+
+LLM 模块、配置系统与日志模块重构计划
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+整理一个文档，放入到Components中，在之类创建一个文件夹，叫做LLM模块开发，文档放入这个文件夹里面，文档名称中文

@@ -1,9 +1,11 @@
 {
   "cli_version": "0.4.9",
   "checkpoint_id": "5e8af2485a79",
+  "session_id": "unknown",
   "strategy": "manual-commit",
+  "created_at": "2026-03-21T12:07:36.722386Z",
   "branch": "main",
-  "checkpoints_count": 4,
+  "checkpoints_count": 2,
   "files_touched": [
     ".env.example",
     "config.json",
@@ -26,27 +28,22 @@
     "src/utils/__init__.py",
     "src/utils/logger.py"
   ],
-  "sessions": [
-    {
-      "metadata": "/5e/8af2485a79/0/metadata.json",
-      "transcript": "/5e/8af2485a79/0/full.jsonl",
-      "context": "/5e/8af2485a79/0/context.md",
-      "content_hash": "/5e/8af2485a79/0/content_hash.txt",
-      "prompt": "/5e/8af2485a79/0/prompt.txt"
-    },
-    {
-      "metadata": "/5e/8af2485a79/1/metadata.json",
-      "transcript": "/5e/8af2485a79/1/full.jsonl",
-      "context": "/5e/8af2485a79/1/context.md",
-      "content_hash": "/5e/8af2485a79/1/content_hash.txt",
-      "prompt": "/5e/8af2485a79/1/prompt.txt"
-    }
-  ],
+  "agent": "Claude Code",
+  "turn_id": "bc36d2247034",
   "token_usage": {
     "input_tokens": 0,
     "cache_creation_tokens": 0,
     "cache_read_tokens": 0,
     "output_tokens": 0,
     "api_call_count": 0
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-03-21T12:07:36.701931Z",
+    "agent_lines": 1474,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1474,
+    "agent_percentage": 100
   }
 }
