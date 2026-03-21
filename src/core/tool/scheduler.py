@@ -118,12 +118,16 @@ class ToolScheduler:
         logger.info("Tool executing: %s (call=%s)", tool_name, call_id)
 
         try:
-            result_str = await self._tool_manager.execute(tool_name, args)
+            tool_result = await self._tool_manager.execute(tool_name, args)
         except Exception as e:
             logger.error("Tool %s execution error: %s", tool_name, e, exc_info=True)
             return self._set_error(record, str(e))
 
-        # 4. success
+        if not tool_result.success:
+            return self._set_error(record, tool_result.error or "工具执行失败")
+
+        # 4. 输出格式化 (render_result) -> success
+        result_str = self._tool_manager.render(tool_name, tool_result)
         return self._set_success(record, result_str)
 
     async def schedule_batch(

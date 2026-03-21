@@ -32,14 +32,55 @@ class ConfirmDetails:
 
 
 @dataclass
+class ToolParameterSchema:
+    """JSON Schema 风格的工具参数定义"""
+    type: str = "object"
+    properties: dict[str, Any] = field(default_factory=dict)
+    required: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "properties": self.properties,
+            "required": self.required,
+        }
+
+
+@dataclass
+class ToolResult:
+    """工具执行的统一结果，所有 handler 都应返回此类型"""
+    success: bool
+    data: Any = None
+    error: str | None = None
+
+    @staticmethod
+    def ok(data: Any = None) -> ToolResult:
+        return ToolResult(success=True, data=data)
+
+    @staticmethod
+    def fail(error: str) -> ToolResult:
+        return ToolResult(success=False, error=error)
+
+
+@dataclass
 class InternalTool:
-    """工具定义"""
+    """工具定义——覆盖名称、描述、参数 Schema、执行函数、输出格式化"""
     name: str
-    definition: dict[str, Any]   # OpenAI function calling format
-    handler: Callable[[dict[str, Any]], Awaitable[str]]
-    category: str = "general"
+    category: str
+    description: str
+    parameters: ToolParameterSchema
+    handler: Callable[[dict[str, Any]], Awaitable[ToolResult]]
+    render_result: Callable[[ToolResult], str] | None = None
     is_read_only: bool = False
     should_confirm: bool | None = None  # None = 由 ApprovalMode 决定
+
+    def get_openai_function(self) -> dict[str, Any]:
+        """输出 OpenAI function calling 格式的工具定义"""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": self.parameters.to_dict(),
+        }
 
 
 @dataclass
