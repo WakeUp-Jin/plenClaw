@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "dc73e660fa45",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "config.json",
+    "docs/Components/存储模块构建/存储模块架构与开发指南.md",
+    "src/config/settings.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/long_term_memory.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/storage/__init__.py",
+    "src/core/context/storage/base.py",
+    "src/core/context/storage/jsonl_store.py",
+    "src/core/tool/memory_tools.py",
+    "src/main.py",
+    "src/memory/__init__.py",
+    "src/memory/memory_context.py",
+    "src/memory/memory_store.py",
+    "src/storage/__init__.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/dc/73e660fa45/0/metadata.json",
+      "transcript": "/dc/73e660fa45/0/full.jsonl",
+      "context": "/dc/73e660fa45/0/context.md",
+      "content_hash": "/dc/73e660fa45/0/content_hash.txt",
+      "prompt": "/dc/73e660fa45/0/prompt.txt"
+    }
+  ]
+}

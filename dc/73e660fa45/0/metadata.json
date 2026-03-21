@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "dc73e660fa45",
+  "session_id": "f590fd4b-c7af-4bda-9033-b6c5b40c3cdf",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-21T13:19:50.461102Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "config.json",
+    "docs/Components/存储模块构建/存储模块架构与开发指南.md",
+    "src/config/settings.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/long_term_memory.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/storage/__init__.py",
+    "src/core/context/storage/base.py",
+    "src/core/context/storage/jsonl_store.py",
+    "src/core/tool/memory_tools.py",
+    "src/main.py",
+    "src/memory/__init__.py",
+    "src/memory/memory_context.py",
+    "src/memory/memory_store.py",
+    "src/storage/__init__.py"
+  ],
+  "agent": "Cursor",
+  "turn_id": "36a7b482de69",
+  "initial_attribution": {
+    "calculated_at": "2026-03-21T13:19:50.431066Z",
+    "agent_lines": 417,
+    "human_added": 536,
+    "human_modified": 41,
+    "human_removed": 0,
+    "total_committed": 994,
+    "agent_percentage": 41.95171026156942
+  }
+}

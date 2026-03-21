@@ -1,0 +1,461 @@
+来构建这个项目的存储模块，采用本地的文件存储，目前可以想到的就是：短期记忆存储，也就是之前的会话存储，但是我在思考，叫做什么比较好呢？之前是叫做session，那么现在呢？并且这里会提供一个命令，触发之后，会创建新的短期记忆文件，这里我们好好设计一下这个概念，第二个是存储配置文件，第三个是存储长期记忆，所以整个文件夹的结果要设计好，相应的模块的读取，修改，删除，查询，等方法也要设计封装好
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/%E6%9E%84%E5%BB%BA%E6%9C%AC%E5%9C%B0%E5%AD%98%E5%82%A8%E6%A8%A1%E5%9D%97_9143e0ca.plan.md" lines="1-224">
+     1|---
+     2|name: 构建本地存储模块
+     3|overview: 为 PineClaw 构建统一的本地文件存储模块 `src/storage/`，涵盖三大存储职责：短期记忆（对话历史）、长期记忆（用户画像/事实）、配置文件，并重新设计概念命名和文件夹结构。
+     4|todos:
+     5|  - id: storage-base
+     6|    content: 创建 src/storage/base.py -- IStorage 抽象基类，提供文件读写/列表/删除的通用方法
+     7|    status: pending
+     8|  - id: conversation-store
+     9|    content: 创建 src/storage/conversation_store.py -- ConversationStore 实现，替代 JsonlContextStorage，包含 CRUD + list/get/delete 方法
+    10|    status: pending
+    11|  - id: memory-store
+    12|    content: 创建 src/storage/memory_store.py -- LocalMemoryStore 实现，本地 Markdown 文件的长期记忆存储
+    13|    status: pending
+    14|  - id: config-store
+    15|    content: 创建 src/storage/config_store.py -- ConfigStore 实现，config.json 的读写封装（支持 dot notation 访问）
+    16|    status: pending
+    17|  - id: update-interfaces
+    18|    content: 更新 IContextStorage 接口：new_session -> new_conversation；更新 ShortTermMemoryContext 和 LongTermMemoryContext 的依赖
+    19|    status: pending
+    20|  - id: update-memory-tools
+    21|    content: 更新 memory_tools.py：将 async 调用改为同步调用，适配 LocalMemoryStore
+    22|    status: pending
+    23|  - id: update-config
+    24|    content: 更新 config.json 和 settings.py：新增 conversations_dir/memory_dir 配置字段
+    25|    status: pending
+    26|  - id: update-main
+    27|    content: 更新 main.py 初始化流程：用新的存储实现替代旧实现
+    28|    status: pending
+    29|  - id: storage-init
+    30|    content: 更新 src/storage/__init__.py 导出，清理旧的 core/context/storage/ 引用
+    31|    status: pending
+    32|isProject: false
+    33|---
+    34|
+    35|# 构建 PineClaw 本地文件存储模块
+    36|
+    37|## 概念设计：命名体系
+    38|
+    39|现有系统中 "session" 用于短期记忆，但 session 偏向技术实现概念，不够语义化。重新定义三层存储概念：
+    40|
+    41|- **Conversation（对话）** -- 替代原来的 session。每段对话是一个独立的 `.jsonl` 文件，`new_conversation` 命令创建新文件。选择 conversation 而非 session 的原因：(1) 更贴合用户心智模型 --"开始一段新对话"比"开始新 session"更直觉；(2) 避免与 web session、auth session 等技术概念混淆；(3) 与 LLM 领域的 conversation 概念一致。
+    42|- **Memory（记忆）** -- 长期记忆，用户画像/事实/偏好，单个 Markdown 文件，本地存储。
+    43|- **Config（配置）** -- 运行时配置 `config.json`，已有实现保持不变。
+    44|
+    45|## 数据目录结构
+    46|
+    47|```
+    48|data/
+    49|├── conversations/                   # 短期记忆：对话历史（原 chat_history/）
+    50|│   ├── conv_20260321_143022.jsonl   # 对话消息文件（append-only）
+    51|│   ├── conv_20260321_143022.checkpoint.json  # 压缩 checkpoint
+    52|│   └── conv_20260320_091500.jsonl   # 旧对话（保留不删除）
+    53|├── memory/                          # 长期记忆
+    54|│   └── memory.md                    # 用户画像/事实/偏好
+    55|└── config.json -> ../config.json    # 配置文件（保持在项目根目录不变）
+    56|```
+    57|
+    58|说明：
+    59|
+    60|- `conversations/` 替代 `chat_history/`，文件名前缀从 `session_` 改为 `conv_`
+    61|- `memory/` 目录下放置长期记忆文件，从飞书云端迁移到本地
+    62|- `config.json` 仍然在项目根目录，由现有 `settings.py` 管理
+    63|
+    64|## 模块架构
+    65|
+    66|```mermaid
+    67|graph TD
+    68|    subgraph storageLayer ["src/storage/ -- 统一存储层"]
+    69|        Base["base.py\nIStorage 基类"]
+    70|        ConvStore["conversation_store.py\nConversationStore"]
+    71|        MemStore["memory_store.py\nLocalMemoryStore"]
+    72|        ConfigStore["config_store.py\nConfigStore"]
+    73|    end
+    74|
+    75|    subgraph contextLayer ["src/core/context/ -- 上下文模块（消费者）"]
+    76|        STM["modules/short_term_memory.py\nShortTermMemoryContext"]
+    77|        LTM["modules/long_term_memory.py\nLongTermMemoryContext"]
+    78|    end
+    79|
+    80|    subgraph configLayer ["src/config/"]
+    81|        Settings["settings.py\nAppConfig"]
+    82|    end
+    83|
+    84|    STM --> ConvStore
+    85|    LTM --> MemStore
+    86|    Settings --> ConfigStore
+    87|    ConvStore --> Base
+    88|    MemStore --> Base
+    89|    ConfigStore --> Base
+    90|```
+    91|
+    92|
+    93|
+    94|核心变更：将存储的 I/O 逻辑从 `core/context/storage/` 移入独立的 `src/storage/` 模块，使 storage 成为一个与 context 平级的独立层。上下文模块只依赖 storage 接口，不关心存储细节。
+    95|
+    96|## 需要新增/修改的文件
+    97|
+    98|### 1. `src/storage/base.py` -- 存储基类
+    99|
+   100|定义 `IStorage` 抽象基类，提供统一的文件操作接口：
+   101|
+   102|```python
+   103|class IStorage(ABC):
+   104|    """本地文件存储的基类。"""
+   105|    
+   106|    def __init__(self, base_dir: str | Path) -> None:
+   107|        self._base_dir = Path(base_dir)
+   108|        self._base_dir.mkdir(parents=True, exist_ok=True)
+   109|
+   110|    @property
+   111|    def base_dir(self) -> Path: ...
+   112|    
+   113|    def exists(self, filename: str) -> bool: ...
+   114|    def read_text(self, filename: str) -> str: ...
+   115|    def write_text(self, filename: str, content: str) -> None: ...
+   116|    def append_text(self, filename: str, content: str) -> None: ...
+   117|    def delete(self, filename: str) -> bool: ...
+   118|    def list_files(self, pattern: str = "*") -> list[Path]: ...
+   119|```
+   120|
+   121|### 2. `src/storage/conversation_store.py` -- 对话存储
+   122|
+   123|替代现有的 `core/context/storage/jsonl_store.py`，实现 `IContextStorage` 接口：
+   124|
+   125|```python
+   126|class ConversationStore(IStorage, IContextStorage):
+   127|    """对话历史的 JSONL 存储。"""
+   128|
+   129|    def __init__(self, base_dir: str = "./data/conversations") -> None: ...
+   130|    
+   131|    # --- IContextStorage 接口实现 ---
+   132|    def append(self, message: dict) -> None: ...
+   133|    def load_all(self) -> list[dict]: ...
+   134|    def load_from_line(self, line_number: int) -> list[dict]: ...
+   135|    def count_lines(self) -> int: ...
+   136|    def save_checkpoint(self, summary: str, checkpoint_line: int) -> None: ...
+   137|    def load_checkpoint(self) -> dict | None: ...
+   138|    def new_conversation(self) -> None: ...  # 替代 new_session()
+   139|    
+   140|    # --- 查询方法 ---
+   141|    def list_conversations(self) -> list[ConversationMeta]: ...  # 列出所有对话
+   142|    def get_conversation(self, conv_id: str) -> list[dict]: ...  # 读取指定对话
+   143|    def delete_conversation(self, conv_id: str) -> bool: ...      # 删除指定对话
+   144|    
+   145|    @property
+   146|    def current_conversation_id(self) -> str: ...
+   147|```
+   148|
+   149|文件名格式：`conv_{timestamp}.jsonl`，`conv_id` 就是 timestamp 部分。
+   150|
+   151|### 3. `src/storage/memory_store.py` -- 本地长期记忆存储
+   152|
+   153|替代现有的飞书版 `src/memory/memory_store.py`：
+   154|
+   155|```python
+   156|class LocalMemoryStore(IStorage):
+   157|    """本地文件长期记忆存储。"""
+   158|
+   159|    MEMORY_FILE = "memory.md"
+   160|
+   161|    def __init__(self, base_dir: str = "./data/memory") -> None: ...
+   162|    
+   163|    def get_memory_text(self) -> str: ...
+   164|    def append_memory(self, content: str) -> bool: ...
+   165|    def replace_memory(self, content: str) -> bool: ...
+   166|    def clear_memory(self) -> bool: ...
+   167|    
+   168|    @property
+   169|    def memory_path(self) -> Path: ...
+   170|    @property
+   171|    def is_empty(self) -> bool: ...
+   172|```
+   173|
+   174|不再需要 `async`，因为是纯本地文件操作（同步 I/O 即可）。
+   175|
+   176|### 4. `src/storage/config_store.py` -- 配置文件存储
+   177|
+   178|对现有 `config.json` 的读写封装：
+   179|
+   180|```python
+   181|class ConfigStore(IStorage):
+   182|    """config.json 的读写封装。"""
+   183|
+   184|    def __init__(self, config_path: str = "./config.json") -> None: ...
+   185|
+   186|    def load(self) -> dict[str, Any]: ...
+   187|    def save(self, data: dict[str, Any]) -> None: ...
+   188|    def get(self, key_path: str, default: Any = None) -> Any: ...  # 支持 dot notation: "llm.models.high"
+   189|    def set(self, key_path: str, value: Any) -> None: ...
+   190|```
+   191|
+   192|### 5. 需要修改的现有文件
+   193|
+   194|- **[src/core/context/storage/base.py](src/core/context/storage/base.py)** -- `IContextStorage.new_session()` 重命名为 `new_conversation()`
+   195|- **[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)** -- `clear()` 方法调用改为 `new_conversation()`
+   196|- **[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)** -- 依赖从飞书 `MemoryStore` 改为 `LocalMemoryStore`
+   197|- **[src/core/tool/memory_tools.py](src/core/tool/memory_tools.py)** -- `memory_handler` 中的 async 调用改为同步调用
+   198|- **[src/config/settings.py](src/config/settings.py)** -- `ChatConfig.history_dir` 默认值改为 `./data/conversations`，新增 `memory_dir` 字段
+   199|- **[config.json](config.json)** -- `chat.history_dir` 改为 `./data/conversations`，新增 `chat.memory_dir`
+   200|- **[src/main.py](src/main.py)** -- 初始化流程：用 `ConversationStore` 替代 `JsonlContextStorage`，用 `LocalMemoryStore` 替代飞书 `MemoryStore`
+   201|- **[src/memory/](src/memory/)** -- 旧的飞书 `memory_store.py` 和 `memory_context.py` 保留但不再在默认启动流程中使用
+   202|
+   203|### 6. `IContextStorage` 接口兼容
+   204|
+   205|`IContextStorage`（在 `core/context/storage/base.py`）是上下文模块与存储层的契约。`ConversationStore` 同时继承 `IStorage` 和 `IContextStorage`，保证 `ShortTermMemoryContext` 无需改动即可切换底层存储实现。
+   206|
+   207|唯一的接口变更是 `new_session()` -> `new_conversation()`，影响范围小且明确。
+   208|
+   209|## 配置变更
+   210|
+   211|`config.json` 中 `chat` 区块调整：
+   212|
+   213|```json
+   214|{
+   215|  "chat": {
+   216|    "conversations_dir": "./data/conversations",
+   217|    "memory_dir": "./data/memory",
+   218|    "max_token_estimate": 60000,
+   219|    "compress_keep_ratio": 0.3
+   220|  }
+   221|}
+   222|```
+   223|
+   224|
+</code_selection>
+
+</attached_files>
+
+构建 PineClaw 本地文件存储模块
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+来构建这个项目的存储模块，采用本地的文件存储，目前可以想到的就是：短期记忆存储，也就是之前的会话存储，但是我在思考，叫做什么比较好呢？之前是叫做session，那么现在呢？并且这里会提供一个命令，触发之后，会创建新的短期记忆文件，这里我们好好设计一下这个概念，第二个是存储配置文件，第三个是存储长期记忆，所以整个文件夹的结果要设计好，相应的模块的读取，修改，删除，查询，等方法也要设计封装好
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/.cursor/plans/构建本地存储模块_9143e0ca.plan.md" lines="1-190">
+     1|# 构建 PineClaw 本地文件存储模块
+     2|
+     3|## 概念设计：命名体系
+     4|
+     5|现有系统中 "session" 用于短期记忆，但 session 偏向技术实现概念，不够语义化。重新定义三层存储概念：
+     6|
+     7|- **Conversation（对话）** -- 替代原来的 session。每段对话是一个独立的 `.jsonl` 文件，`new_conversation` 命令创建新文件。选择 conversation 而非 session 的原因：(1) 更贴合用户心智模型 --"开始一段新对话"比"开始新 session"更直觉；(2) 避免与 web session、auth session 等技术概念混淆；(3) 与 LLM 领域的 conversation 概念一致。
+     8|- **Memory（记忆）** -- 长期记忆，用户画像/事实/偏好，单个 Markdown 文件，本地存储。
+     9|- **Config（配置）** -- 运行时配置 `config.json`，已有实现保持不变。
+    10|
+    11|## 数据目录结构
+    12|
+    13|```
+    14|data/
+    15|├── conversations/                   # 短期记忆：对话历史（原 chat_history/）
+    16|│   ├── conv_20260321_143022.jsonl   # 对话消息文件（append-only）
+    17|│   ├── conv_20260321_143022.checkpoint.json  # 压缩 checkpoint
+    18|│   └── conv_20260320_091500.jsonl   # 旧对话（保留不删除）
+    19|├── memory/                          # 长期记忆
+    20|│   └── memory.md                    # 用户画像/事实/偏好
+    21|└── config.json -> ../config.json    # 配置文件（保持在项目根目录不变）
+    22|```
+    23|
+    24|说明：
+    25|
+    26|- `conversations/` 替代 `chat_history/`，文件名前缀从 `session_` 改为 `conv_`
+    27|- `memory/` 目录下放置长期记忆文件，从飞书云端迁移到本地
+    28|- `config.json` 仍然在项目根目录，由现有 `settings.py` 管理
+    29|
+    30|## 模块架构
+    31|
+    32|```mermaid
+    33|graph TD
+    34|    subgraph storageLayer ["src/storage/ -- 统一存储层"]
+    35|        Base["base.py\nIStorage 基类"]
+    36|        ConvStore["conversation_store.py\nConversationStore"]
+    37|        MemStore["memory_store.py\nLocalMemoryStore"]
+    38|        ConfigStore["config_store.py\nConfigStore"]
+    39|    end
+    40|
+    41|    subgraph contextLayer ["src/core/context/ -- 上下文模块（消费者）"]
+    42|        STM["modules/short_term_memory.py\nShortTermMemoryContext"]
+    43|        LTM["modules/long_term_memory.py\nLongTermMemoryContext"]
+    44|    end
+    45|
+    46|    subgraph configLayer ["src/config/"]
+    47|        Settings["settings.py\nAppConfig"]
+    48|    end
+    49|
+    50|    STM --> ConvStore
+    51|    LTM --> MemStore
+    52|    Settings --> ConfigStore
+    53|    ConvStore --> Base
+    54|    MemStore --> Base
+    55|    ConfigStore --> Base
+    56|```
+    57|
+    58|
+    59|
+    60|核心变更：将存储的 I/O 逻辑从 `core/context/storage/` 移入独立的 `src/storage/` 模块，使 storage 成为一个与 context 平级的独立层。上下文模块只依赖 storage 接口，不关心存储细节。
+    61|
+    62|## 需要新增/修改的文件
+    63|
+    64|### 1. `src/storage/base.py` -- 存储基类
+    65|
+    66|定义 `IStorage` 抽象基类，提供统一的文件操作接口：
+    67|
+    68|```python
+    69|class IStorage(ABC):
+    70|    """本地文件存储的基类。"""
+    71|    
+    72|    def __init__(self, base_dir: str | Path) -> None:
+    73|        self._base_dir = Path(base_dir)
+    74|        self._base_dir.mkdir(parents=True, exist_ok=True)
+    75|
+    76|    @property
+    77|    def base_dir(self) -> Path: ...
+    78|    
+    79|    def exists(self, filename: str) -> bool: ...
+    80|    def read_text(self, filename: str) -> str: ...
+    81|    def write_text(self, filename: str, content: str) -> None: ...
+    82|    def append_text(self, filename: str, content: str) -> None: ...
+    83|    def delete(self, filename: str) -> bool: ...
+    84|    def list_files(self, pattern: str = "*") -> list[Path]: ...
+    85|```
+    86|
+    87|### 2. `src/storage/conversation_store.py` -- 对话存储
+    88|
+    89|替代现有的 `core/context/storage/jsonl_store.py`，实现 `IContextStorage` 接口：
+    90|
+    91|```python
+    92|class ConversationStore(IStorage, IContextStorage):
+    93|    """对话历史的 JSONL 存储。"""
+    94|
+    95|    def __init__(self, base_dir: str = "./data/conversations") -> None: ...
+    96|    
+    97|    # --- IContextStorage 接口实现 ---
+    98|    def append(self, message: dict) -> None: ...
+    99|    def load_all(self) -> list[dict]: ...
+   100|    def load_from_line(self, line_number: int) -> list[dict]: ...
+   101|    def count_lines(self) -> int: ...
+   102|    def save_checkpoint(self, summary: str, checkpoint_line: int) -> None: ...
+   103|    def load_checkpoint(self) -> dict | None: ...
+   104|    def new_conversation(self) -> None: ...  # 替代 new_session()
+   105|    
+   106|    # --- 查询方法 ---
+   107|    def list_conversations(self) -> list[ConversationMeta]: ...  # 列出所有对话
+   108|    def get_conversation(self, conv_id: str) -> list[dict]: ...  # 读取指定对话
+   109|    def delete_conversation(self, conv_id: str) -> bool: ...      # 删除指定对话
+   110|    
+   111|    @property
+   112|    def current_conversation_id(self) -> str: ...
+   113|```
+   114|
+   115|文件名格式：`conv_{timestamp}.jsonl`，`conv_id` 就是 timestamp 部分。
+   116|
+   117|### 3. `src/storage/memory_store.py` -- 本地长期记忆存储
+   118|
+   119|替代现有的飞书版 `src/memory/memory_store.py`：
+   120|
+   121|```python
+   122|class LocalMemoryStore(IStorage):
+   123|    """本地文件长期记忆存储。"""
+   124|
+   125|    MEMORY_FILE = "memory.md"
+   126|
+   127|    def __init__(self, base_dir: str = "./data/memory") -> None: ...
+   128|    
+   129|    def get_memory_text(self) -> str: ...
+   130|    def append_memory(self, content: str) -> bool: ...
+   131|    def replace_memory(self, content: str) -> bool: ...
+   132|    def clear_memory(self) -> bool: ...
+   133|    
+   134|    @property
+   135|    def memory_path(self) -> Path: ...
+   136|    @property
+   137|    def is_empty(self) -> bool: ...
+   138|```
+   139|
+   140|不再需要 `async`，因为是纯本地文件操作（同步 I/O 即可）。
+   141|
+   142|### 4. `src/storage/config_store.py` -- 配置文件存储
+   143|
+   144|对现有 `config.json` 的读写封装：
+   145|
+   146|```python
+   147|class ConfigStore(IStorage):
+   148|    """config.json 的读写封装。"""
+   149|
+   150|    def __init__(self, config_path: str = "./config.json") -> None: ...
+   151|
+   152|    def load(self) -> dict[str, Any]: ...
+   153|    def save(self, data: dict[str, Any]) -> None: ...
+   154|    def get(self, key_path: str, default: Any = None) -> Any: ...  # 支持 dot notation: "llm.models.high"
+   155|    def set(self, key_path: str, value: Any) -> None: ...
+   156|```
+   157|
+   158|### 5. 需要修改的现有文件
+   159|
+   160|- **[src/core/context/storage/base.py](src/core/context/storage/base.py)** -- `IContextStorage.new_session()` 重命名为 `new_conversation()`
+   161|- **[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)** -- `clear()` 方法调用改为 `new_conversation()`
+   162|- **[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)** -- 依赖从飞书 `MemoryStore` 改为 `LocalMemoryStore`
+   163|- **[src/core/tool/memory_tools.py](src/core/tool/memory_tools.py)** -- `memory_handler` 中的 async 调用改为同步调用
+   164|- **[src/config/settings.py](src/config/settings.py)** -- `ChatConfig.history_dir` 默认值改为 `./data/conversations`，新增 `memory_dir` 字段
+   165|- **[config.json](config.json)** -- `chat.history_dir` 改为 `./data/conversations`，新增 `chat.memory_dir`
+   166|- **[src/main.py](src/main.py)** -- 初始化流程：用 `ConversationStore` 替代 `JsonlContextStorage`，用 `LocalMemoryStore` 替代飞书 `MemoryStore`
+   167|- **[src/memory/](src/memory/)** -- 旧的飞书 `memory_store.py` 和 `memory_context.py` 保留但不再在默认启动流程中使用
+   168|
+   169|### 6. `IContextStorage` 接口兼容
+   170|
+   171|`IContextStorage`（在 `core/context/storage/base.py`）是上下文模块与存储层的契约。`ConversationStore` 同时继承 `IStorage` 和 `IContextStorage`，保证 `ShortTermMemoryContext` 无需改动即可切换底层存储实现。
+   172|
+   173|唯一的接口变更是 `new_session()` -> `new_conversation()`，影响范围小且明确。
+   174|
+   175|## 配置变更
+   176|
+   177|`config.json` 中 `chat` 区块调整：
+   178|
+   179|```json
+   180|{
+   181|  "chat": {
+   182|    "conversations_dir": "./data/conversations",
+   183|    "memory_dir": "./data/memory",
+   184|    "max_token_estimate": 60000,
+   185|    "compress_keep_ratio": 0.3
+   186|  }
+   187|}
+   188|```
+   189|
+   190|
+</code_selection>
+
+</attached_files>
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+整理一个文档放入到Components中，存储模块的构建文件夹名字，将文档放入到这个文件夹中
+
+---
+
+/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context
+
+那这里是不是有些方法要清理掉呢或者更换掉呢？
+
+---
+
+这个storage没用了是吗？可以直接删除掉，在context中要使用到存储的时候，查询，增加什么的，都使用这个模块的：/Users/xjk/Desktop/ScriptCode/PineClaw/src/storage
