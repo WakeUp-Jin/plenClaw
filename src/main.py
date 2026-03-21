@@ -23,6 +23,7 @@ from core.tool.types import ApprovalMode
 from core.tool.feishu.client import FeishuClient
 from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
+from core.tool.tools.read_file import ReadFileTool
 from core.agent.simple_agent import SimpleAgent
 
 from storage.conversation_store import ConversationStore
@@ -56,8 +57,9 @@ async def startup() -> None:
 
     # 3. Tool Manager + register tools
     tool_manager = ToolManager()
+    tool_manager.register(ReadFileTool)
     register_feishu_tools(tool_manager, feishu_client)
-    logger.info("Feishu tools registered: %d tools", len(tool_manager.list_tools()))
+    logger.info("Tools registered: %d tools", len(tool_manager.list_tools()))
 
     # 4. Local Memory Store (replaces Feishu-based MemoryStore)
     memory_store = LocalMemoryStore(base_dir=settings.memory_dir)

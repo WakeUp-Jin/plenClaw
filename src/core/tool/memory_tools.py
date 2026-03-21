@@ -95,7 +95,7 @@ def register_memory_tools(tool_manager: Any, memory_store: LocalMemoryStore) -> 
     async def _async_handler(args: dict[str, Any]) -> str:
         return memory_handler(memory_store, args)
 
-    tool_manager.register(
+    tool_manager.register_legacy(
         name="memory",
         definition=memory_def,
         handler=_async_handler,

@@ -29,7 +29,7 @@ _FEISHU_TOOLS = [
 def register_feishu_tools(tool_manager: ToolManager, feishu_client: FeishuClient) -> None:
     """Register all 6 unified Feishu API tools into ToolManager."""
     for definition, handler in _FEISHU_TOOLS:
-        tool_manager.register(
+        tool_manager.register_legacy(
             name=definition["name"],
             definition=definition,
             handler=lambda args, h=handler: h(feishu_client, args),
