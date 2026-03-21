@@ -1,0 +1,161 @@
+现在来创建执行器，在core中创建一个文件夹叫做执行器，逻辑和作用类似于这个文件：/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/utils/tool_loop.py
+
+有了执行器之后这个文件可以删除啦，执行器使用被agent文件夹里面的那个单Agent文件使用，或者说，文件名修改为agent更好而不是simple_agent，记住，这个执行器里面会使用上下文管理类、工具类、llm工厂类，这个类的实例化要放入到agent.py文件中，这样看起来会更加的可读性好看，传入执行器中使用，开始吧，工具的注册暂时只注册tools文件夹下面的，飞书文件夹不用管
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/%E5%88%9B%E5%BB%BA%E6%89%A7%E8%A1%8C%E5%BC%95%E6%93%8E%E6%A8%A1%E5%9D%97_742c8c78.plan.md" lines="1-135">
+     1|---
+     2|name: 创建执行引擎模块
+     3|overview: 从 tool_loop.py 提取逻辑，在 core/engine/ 下创建独立的执行引擎模块(ExecutionEngine)，并重构 Agent 使其在 agent.py 中实例化各核心组件后注入执行引擎。
+     4|todos:
+     5|  - id: create-engine
+     6|    content: 新建 core/engine/__init__.py 和 core/engine/engine.py，将 tool_loop.py 逻辑封装为 ExecutionEngine 类
+     7|    status: pending
+     8|  - id: rename-agent
+     9|    content: 将 simple_agent.py 重命名为 agent.py，类名 SimpleAgent -> Agent，内部实例化 ExecutionEngine
+    10|    status: pending
+    11|  - id: delete-tool-loop
+    12|    content: 删除 core/llm/utils/tool_loop.py
+    13|    status: pending
+    14|  - id: update-main
+    15|    content: 更新 main.py 和 api/routes/chat.py 中的 import 引用
+    16|    status: pending
+    17|  - id: verify-lint
+    18|    content: 检查所有修改文件的 linter 错误
+    19|    status: pending
+    20|isProject: false
+    21|---
+    22|
+    23|# 创建执行引擎 (ExecutionEngine) 模块
+    24|
+    25|## 背景
+    26|
+    27|当前 `tool_loop.py` 是一个纯函数式的工具循环，作为 util 放在 `core/llm/utils/` 下不太合理。需要将其提升为独立的执行引擎模块 `core/engine/`，以类的形式封装，由 Agent 实例化并注入依赖。
+    28|
+    29|## 当前调用链
+    30|
+    31|```mermaid
+    32|flowchart LR
+    33|  Agent["SimpleAgent.run()"] --> ToolLoop["execute_tool_loop()"]
+    34|  ToolLoop --> LLM["BaseLLMService.complete()"]
+    35|  ToolLoop --> Scheduler["ToolScheduler.schedule_batch()"]
+    36|  Scheduler --> Manager["ToolManager.execute()"]
+    37|```
+    38|
+    39|
+    40|
+    41|## 重构后调用链
+    42|
+    43|```mermaid
+    44|flowchart LR
+    45|  Agent["Agent.run()"] --> Engine["ExecutionEngine.run()"]
+    46|  Engine --> LLM["BaseLLMService.complete()"]
+    47|  Engine --> Scheduler["ToolScheduler.schedule_batch()"]
+    48|  Agent -.实例化.-> Engine
+    49|  Agent -.实例化.-> CtxMgr["ContextManager"]
+    50|  Agent -.实例化.-> TMgr["ToolManager"]
+    51|  Agent -.实例化.-> Sched["ToolScheduler"]
+    52|  Agent -.实例化.-> Registry["LLMServiceRegistry"]
+    53|```
+    54|
+    55|
+    56|
+    57|## 变更清单
+    58|
+    59|### 1. 新建 `src/core/engine/` 目录
+    60|
+    61|- `src/core/engine/__init__.py` -- 导出 `ExecutionEngine`
+    62|- `src/core/engine/engine.py` -- 执行引擎核心类
+    63|
+    64|### 2. `ExecutionEngine` 类设计 (`core/engine/engine.py`)
+    65|
+    66|将 `tool_loop.py` 的 `execute_tool_loop()` 逻辑封装为类，接收依赖注入：
+    67|
+    68|```python
+    69|class ExecutionEngine:
+    70|    def __init__(
+    71|        self,
+    72|        llm_registry: LLMServiceRegistry,
+    73|        scheduler: ToolScheduler,
+    74|        max_iterations: int = 10,
+    75|    ) -> None: ...
+    76|
+    77|    async def run(
+    78|        self,
+    79|        messages: list[dict],
+    80|        tools: list[dict],
+    81|        chat_id: str = "",
+    82|    ) -> tuple[str, TokenUsage, list[dict]]: ...
+    83|```
+    84|
+    85|- `run()` 方法封装原 `execute_tool_loop()` 的完整逻辑
+    86|- `llm_registry` 用于获取 LLM 服务（通过 `get_high()`)
+    87|- `scheduler` 用于工具调度
+    88|- 返回值保持不变：`(final_text, token_usage, intermediate_messages)`
+    89|
+    90|### 3. 重命名 `simple_agent.py` -> `agent.py`，重构 `Agent` 类
+    91|
+    92|将 [src/core/agent/simple_agent.py](src/core/agent/simple_agent.py) 重命名为 `agent.py`，类名改为 `Agent`：
+    93|
+    94|- Agent 负责实例化 `ExecutionEngine`（将 `llm_registry` 和 `scheduler` 注入）
+    95|- Agent 持有 `ContextManager`、`ToolManager` 等依赖
+    96|- 工具注册（仅 `tools/` 下的工具）在 Agent 内部完成，通过一个私有方法 `_register_tools()` 注册 `ReadFileTool` 等
+    97|- Agent 的 `run()` 方法精简：组装 context -> 调用 `engine.run()` -> 处理结果
+    98|
+    99|```python
+   100|class Agent:
+   101|    def __init__(
+   102|        self,
+   103|        llm_registry: LLMServiceRegistry,
+   104|        context_manager: ContextManager,
+   105|        scheduler: ToolScheduler,
+   106|        token_counter: TokenCounter | None = None,
+   107|    ) -> None:
+   108|        self._engine = ExecutionEngine(
+   109|            llm_registry=llm_registry,
+   110|            scheduler=scheduler,
+   111|        )
+   112|        ...
+   113|```
+   114|
+   115|### 4. 删除 `src/core/llm/utils/tool_loop.py`
+   116|
+   117|执行引擎完全替代了此文件的功能。
+   118|
+   119|### 5. 更新 `src/main.py`
+   120|
+   121|- `from core.agent.simple_agent import SimpleAgent` -> `from core.agent.agent import Agent`
+   122|- 工具注册：只注册 `tools/` 文件夹下的工具（ReadFileTool），飞书工具保留在 `main.py` 中单独注册（因为依赖 `feishu_client`）
+   123|- `SimpleAgent(...)` -> `Agent(...)`
+   124|
+   125|### 6. 更新其他引用
+   126|
+   127|- [src/api/routes/chat.py](src/api/routes/chat.py) 中如果引用了 `SimpleAgent` 类型需要改为 `Agent`
+   128|
+   129|## 不变的部分
+   130|
+   131|- `ToolManager`、`ToolScheduler`、`ContextManager`、`LLMServiceRegistry` 本身不做改动
+   132|- 飞书工具（`core/tool/feishu/`）的注册仍在 `main.py` 中，不纳入 Agent 内部
+   133|- `memory_tools` 的注册仍在 `main.py` 中
+   134|
+   135|
+</code_selection>
+
+</attached_files>
+
+创建执行引擎 (ExecutionEngine) 模块
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+继续
+
+---
+
+写一个cli的文件，运行这个文件之后，我可以输入，agent也可以输出，用以暂时阶段性的测试，文件放入到agent中
