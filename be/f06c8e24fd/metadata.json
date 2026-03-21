@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "bef06c8e24fd",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/core/tool/feishu/__init__.py",
+    "src/core/tool/manager.py",
+    "src/core/tool/memory_tools.py",
+    "src/core/tool/scheduler.py",
+    "src/core/tool/tools/__init__.py",
+    "src/core/tool/tools/read_file/__init__.py",
+    "src/core/tool/tools/read_file/definition.py",
+    "src/core/tool/tools/read_file/executor.py",
+    "src/core/tool/types.py",
+    "src/main.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/be/f06c8e24fd/0/metadata.json",
+      "transcript": "/be/f06c8e24fd/0/full.jsonl",
+      "context": "/be/f06c8e24fd/0/context.md",
+      "content_hash": "/be/f06c8e24fd/0/content_hash.txt",
+      "prompt": "/be/f06c8e24fd/0/prompt.txt"
+    }
+  ]
+}

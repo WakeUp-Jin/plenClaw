@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "bef06c8e24fd",
+  "session_id": "6bb494ca-220c-42d8-b141-bf0ff2c964d4",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-21T13:41:17.678693Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/core/tool/feishu/__init__.py",
+    "src/core/tool/manager.py",
+    "src/core/tool/memory_tools.py",
+    "src/core/tool/scheduler.py",
+    "src/core/tool/tools/__init__.py",
+    "src/core/tool/tools/read_file/__init__.py",
+    "src/core/tool/tools/read_file/definition.py",
+    "src/core/tool/tools/read_file/executor.py",
+    "src/core/tool/types.py",
+    "src/main.py"
+  ],
+  "agent": "Cursor",
+  "turn_id": "b5a09f7244a9",
+  "initial_attribution": {
+    "calculated_at": "2026-03-21T13:41:17.661212Z",
+    "agent_lines": 215,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 48,
+    "total_committed": 215,
+    "agent_percentage": 100
+  }
+}

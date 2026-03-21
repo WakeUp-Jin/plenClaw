@@ -1,0 +1,168 @@
+现在我们来重构工具类，参考这个ce-tool-managerment的skill，同时注意目前我还没有想好想要哪些工具，你就简单的创建一个读取工具就可以，其他的后续在说，但是工具的管理和执行调度两个关键的模块要有
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/%E9%87%8D%E6%9E%84%E5%B7%A5%E5%85%B7%E7%AE%A1%E7%90%86%E6%A8%A1%E5%9D%97_dd222b3a.plan.md" lines="1-152">
+     1|---
+     2|name: 重构工具管理模块
+     3|overview: 参照 ce-tool-management skill，将现有扁平化的工具模块重构为「每个工具一个目录」+「ToolManager 注册中心」+「ToolScheduler 执行调度器」三层架构，暂时只创建一个 ReadFile 工具作为示范。
+     4|todos:
+     5|  - id: refactor-types
+     6|    content: 重构 types.py：新增 ToolParameterSchema / ToolResult，升级 InternalTool 接口
+     7|    status: pending
+     8|  - id: refactor-manager
+     9|    content: 重构 manager.py：register() 接受 InternalTool 对象，新增 register_legacy() 兼容旧式注册
+    10|    status: pending
+    11|  - id: refactor-scheduler
+    12|    content: 调整 scheduler.py：execute 后集成 render_result 输出格式化
+    13|    status: pending
+    14|  - id: create-read-file
+    15|    content: 新建 tools/read_file/ 目录，实现 definition.py + executor.py
+    16|    status: pending
+    17|  - id: update-main
+    18|    content: 更新 main.py：注册 ReadFile 工具，飞书/记忆工具用兼容方式
+    19|    status: pending
+    20|  - id: update-tool-loop
+    21|    content: 检查并微调 tool_loop.py 适配新的 ToolResult 类型
+    22|    status: pending
+    23|isProject: false
+    24|---
+    25|
+    26|# 重构工具管理模块
+    27|
+    28|## 现状分析
+    29|
+    30|当前 `src/core/tool/` 结构较扁平：
+    31|
+    32|- `types.py` — 已有 `InternalTool` (dataclass) + 状态枚举，但 `InternalTool.handler` 签名为 `(dict) -> str`，缺少 `renderResultForAssistant`、`isReadOnly()` 方法等
+    33|- `manager.py` — `ToolManager`：register 接受散装参数（name/definition/handler/...），execute 直接调用 handler 返回 str
+    34|- `scheduler.py` — `ToolScheduler`：已有完整调度+审批流，设计合理
+    35|- `approval.py` — `ApprovalStore`：基于 asyncio.Future 的审批等待，保持不变
+    36|- `memory_tools.py` / `feishu/` — 工具定义和执行逻辑混在一起，注册方式为外部函数调用 `tool_manager.register(...)`
+    37|
+    38|**核心问题：**
+    39|
+    40|1. 工具定义用裸 dict + 散装参数，缺乏结构化的 `InternalTool` 自描述能力
+    41|2. 没有 `renderResultForAssistant` 输出格式化层
+    42|3. 没有每个工具独立目录的组织方式
+    43|4. ToolManager.register() 需要外部传入 6 个参数，无法接受 InternalTool 对象
+    44|
+    45|## 目标架构
+    46|
+    47|```
+    48|src/core/tool/
+    49|├── tools/                    # 具体工具目录
+    50|│   └── read_file/           # ReadFile 工具（本次实现的唯一示范工具）
+    51|│       ├── __init__.py
+    52|│       ├── definition.py    # 工具定义（InternalTool 实例）
+    53|│       └── executor.py      # handler + renderResultForAssistant
+    54|├── manager.py               # ToolManager（重构：接受 InternalTool 对象）
+    55|├── scheduler.py             # ToolScheduler（小调整：输出格式化集成）
+    56|├── approval.py              # ApprovalStore（保持不变）
+    57|├── types.py                 # 类型定义（重构 InternalTool 接口）
+    58|├── __init__.py              # 模块导出
+    59|└── feishu/                  # 飞书工具（暂不动，后续迁移）
+    60|```
+    61|
+    62|## 关键变更
+    63|
+    64|### 1. 重构 `types.py` — InternalTool 接口升级
+    65|
+    66|将 `InternalTool` 从 dataclass 升级为更完整的工具定义：
+    67|
+    68|```python
+    69|@dataclass
+    70|class ToolParameterSchema:
+    71|    type: str = "object"
+    72|    properties: dict[str, Any] = field(default_factory=dict)
+    73|    required: list[str] = field(default_factory=list)
+    74|
+    75|@dataclass
+    76|class ToolResult:
+    77|    success: bool
+    78|    data: Any = None
+    79|    error: str | None = None
+    80|
+    81|@dataclass
+    82|class InternalTool:
+    83|    name: str
+    84|    category: str
+    85|    description: str
+    86|    parameters: ToolParameterSchema
+    87|    handler: Callable[[dict[str, Any]], Awaitable[ToolResult]]
+    88|    render_result: Callable[[ToolResult], str] | None = None
+    89|    is_read_only: bool = False
+    90|    should_confirm: bool | None = None
+    91|```
+    92|
+    93|关键改进：
+    94|
+    95|- `handler` 返回结构化的 `ToolResult` 而非裸 str
+    96|- 新增 `render_result` 字段，控制 LLM 看到的输出格式
+    97|- `description` 独立字段，不再埋在 dict 里
+    98|- `parameters` 用 `ToolParameterSchema` 替代裸 dict
+    99|
+   100|### 2. 重构 `manager.py` — ToolManager 接受 InternalTool 对象
+   101|
+   102|```python
+   103|class ToolManager:
+   104|    def register(self, tool: InternalTool) -> None:
+   105|        self._tools[tool.name] = tool
+   106|
+   107|    def execute(self, name: str, args: dict) -> Awaitable[ToolResult]:
+   108|        ...
+   109|
+   110|    def get_formatted_tools(self) -> list[dict]:
+   111|        # 输出 OpenAI function calling 格式
+   112|```
+   113|
+   114|改为接受 `InternalTool` 对象而非 6 个散装参数。`execute` 返回 `ToolResult`，由调用方决定是否走 `render_result`。
+   115|
+   116|### 3. 调整 `scheduler.py` — 集成输出格式化
+   117|
+   118|在 `_set_success` 中集成 `render_result` 调用：
+   119|
+   120|- 工具执行 -> 得到 `ToolResult`
+   121|- 如果工具定义了 `render_result`，调用它生成格式化字符串
+   122|- 否则 fallback 到 `json.dumps(result.data)`
+   123|- 将格式化后的字符串放入 `ScheduleResult.result_string`
+   124|
+   125|### 4. 新增 `tools/read_file/` — ReadFile 示范工具
+   126|
+   127|- `definition.py`：定义 `ReadFileTool: InternalTool`，参数为 `file_path`（必填）、`offset`（可选，起始行号）、`limit`（可选，读取行数）
+   128|- `executor.py`：实现 `read_file_handler` 读取文件内容 + `render_read_file_result` 输出带行号的格式化文本
+   129|- 仅允许读取项目工作目录下的文件（安全限制）
+   130|
+   131|### 5. 兼容旧工具注册方式
+   132|
+   133|为了不破坏现有飞书工具和记忆工具，在 ToolManager 上保留一个 `register_legacy()` 方法（或适配函数），使旧式 `(name, definition_dict, handler)` 注册方式仍然可用，内部转换为 `InternalTool` 对象。
+   134|
+   135|### 6. 调整 `tool_loop.py`
+   136|
+   137|`tool_loop.py` 当前已经依赖 `ScheduleResult.result_string`，无需大改。唯一变化是 `ScheduleResult.result_string` 现在由 scheduler 经过 `render_result` 处理后填充，而非直接存原始 handler 返回值。
+   138|
+   139|### 7. 调整 `main.py` 初始化流程
+   140|
+   141|- ReadFile 工具通过 `tool_manager.register(ReadFileTool)` 注册
+   142|- 飞书工具和记忆工具暂用 `register_legacy()` 兼容方式
+   143|
+   144|## 不变更的模块
+   145|
+   146|- `approval.py` — 保持不变
+   147|- `feishu/` — 暂不迁移，用兼容适配
+   148|- `memory_tools.py` — 暂不迁移，用兼容适配
+   149|- `tool_loop.py` — 逻辑基本不变
+   150|- `simple_agent.py` — 无需修改
+   151|
+   152|
+</code_selection>
+
+</attached_files>
+
+重构工具管理模块
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
