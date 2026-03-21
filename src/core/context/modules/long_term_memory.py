@@ -1,8 +1,8 @@
 """Long-term memory context module.
 
-Bridges the existing ``MemoryStore`` (Feishu-backed persistent storage) into
-the context pipeline.  This module is read-only at the context level —
-writes go through the ``MemoryStore`` / memory tools directly.
+Bridges the ``LocalMemoryStore`` (local file-based persistent storage) into
+the context pipeline.  This module is read-only at the context level --
+writes go through the ``LocalMemoryStore`` / memory tools directly.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from core.context.base import BaseContext
 from core.context.types import ContextItem, MessagePriority
 
 if TYPE_CHECKING:
-    from memory.memory_store import MemoryStore
+    from storage.memory_store import LocalMemoryStore
 
 MEMORY_PREAMBLE = "以下是你对用户的长期记忆，请基于这些信息个性化回复：\n\n"
 
@@ -21,7 +21,7 @@ MEMORY_PREAMBLE = "以下是你对用户的长期记忆，请基于这些信息�
 class LongTermMemoryContext(BaseContext[str]):
     """Injects long-term memory text into the LLM context."""
 
-    def __init__(self, memory_store: MemoryStore) -> None:
+    def __init__(self, memory_store: LocalMemoryStore) -> None:
         super().__init__()
         self._store = memory_store
 

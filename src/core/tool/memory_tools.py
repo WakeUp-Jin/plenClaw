@@ -1,4 +1,4 @@
-"""记忆工具 - 合并 append/rewrite 为单一 memory 工具"""
+"""Memory tools -- append / rewrite long-term memory via a single unified tool."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from memory.memory_store import MemoryStore
+    from storage.memory_store import LocalMemoryStore
 
 
 memory_def: dict[str, Any] = {
@@ -38,7 +38,7 @@ memory_def: dict[str, Any] = {
 }
 
 
-async def _handle_append(memory_store: MemoryStore, args: dict[str, Any]) -> str:
+def _handle_append(memory_store: LocalMemoryStore, args: dict[str, Any]) -> str:
     section = args.get("section") or "未分类"
     content = args["content"]
 
@@ -48,16 +48,16 @@ async def _handle_append(memory_store: MemoryStore, args: dict[str, Any]) -> str
     else:
         append_text = f"\n## {section}\n- {content}"
 
-    success = await memory_store.append(append_text)
+    success = memory_store.append_memory(append_text)
     if success:
         return json.dumps({"status": "ok", "message": f"已记住：{content}"}, ensure_ascii=False)
     return json.dumps(
-        {"status": "cached", "message": "记忆写入飞书失败，已缓存在本地，将在下次重试"},
+        {"status": "failed", "message": "记忆写入失败"},
         ensure_ascii=False,
     )
 
 
-async def _handle_rewrite(memory_store: MemoryStore, args: dict[str, Any]) -> str:
+def _handle_rewrite(memory_store: LocalMemoryStore, args: dict[str, Any]) -> str:
     content = args["content"]
 
     if not content.startswith("# PineClaw Memory"):
@@ -66,11 +66,11 @@ async def _handle_rewrite(memory_store: MemoryStore, args: dict[str, Any]) -> st
             ensure_ascii=False,
         )
 
-    success = await memory_store.replace(content)
+    success = memory_store.replace_memory(content)
     if success:
         return json.dumps({"status": "ok", "message": "记忆已整理并更新"}, ensure_ascii=False)
     return json.dumps(
-        {"status": "failed", "message": "记忆覆写飞书失败，已回滚"},
+        {"status": "failed", "message": "记忆覆写失败"},
         ensure_ascii=False,
     )
 
@@ -81,19 +81,23 @@ _ACTION_MAP = {
 }
 
 
-async def memory_handler(memory_store: MemoryStore, args: dict[str, Any]) -> str:
+def memory_handler(memory_store: LocalMemoryStore, args: dict[str, Any]) -> str:
     action = args.get("action", "")
     handler = _ACTION_MAP.get(action)
     if handler is None:
         return json.dumps({"error": f"Unknown action: {action}"})
-    return await handler(memory_store, args)
+    return handler(memory_store, args)
 
 
-def register_memory_tools(tool_manager: Any, memory_store: MemoryStore) -> None:
+def register_memory_tools(tool_manager: Any, memory_store: LocalMemoryStore) -> None:
     """Register the unified memory tool."""
+
+    async def _async_handler(args: dict[str, Any]) -> str:
+        return memory_handler(memory_store, args)
+
     tool_manager.register(
         name="memory",
         definition=memory_def,
-        handler=lambda args: memory_handler(memory_store, args),
+        handler=_async_handler,
         category="memory",
     )

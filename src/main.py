@@ -15,7 +15,6 @@ from core.context.modules.system_prompt import SystemPromptContext
 from core.context.modules.long_term_memory import LongTermMemoryContext
 from core.context.modules.short_term_memory import ShortTermMemoryContext
 from core.context.modules.tool_context import ToolContext
-from core.context.storage.jsonl_store import JsonlContextStorage
 from core.context.utils.compressor import ContextCompressor
 from core.tool.manager import ToolManager
 from core.tool.scheduler import ToolScheduler, ToolSchedulerConfig
@@ -26,7 +25,8 @@ from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
 from core.agent.simple_agent import SimpleAgent
 
-from memory.memory_store import MemoryStore
+from storage.conversation_store import ConversationStore
+from storage.memory_store import LocalMemoryStore
 
 from channels.feishu.channel import FeishuChannel
 from channels.registry import get_all_channels, register_channel
@@ -59,25 +59,21 @@ async def startup() -> None:
     register_feishu_tools(tool_manager, feishu_client)
     logger.info("Feishu tools registered: %d tools", len(tool_manager.list_tools()))
 
-    # 4. Memory Store
-    memory_store = MemoryStore(
-        feishu_client=feishu_client,
-        folder_name=settings.feishu_memory_folder_name,
-    )
-    await memory_store.initialize()
+    # 4. Local Memory Store (replaces Feishu-based MemoryStore)
+    memory_store = LocalMemoryStore(base_dir=settings.memory_dir)
     register_memory_tools(tool_manager, memory_store)
     logger.info("Memory tools registered, total: %d tools", len(tool_manager.list_tools()))
 
     # 5. Context modules
-    storage = JsonlContextStorage(history_dir=settings.chat_history_dir)
+    conversation_storage = ConversationStore(base_dir=settings.conversations_dir)
     logger.info(
-        "JsonlContextStorage initialized: dir=%s, session=%s",
-        settings.chat_history_dir,
-        storage.session_file,
+        "ConversationStore initialized: dir=%s, conversation=%s",
+        settings.conversations_dir,
+        conversation_storage.conversation_file,
     )
 
     compressor = ContextCompressor()
-    short_term = ShortTermMemoryContext(storage=storage, compressor=compressor)
+    short_term = ShortTermMemoryContext(storage=conversation_storage, compressor=compressor)
     long_term = LongTermMemoryContext(memory_store=memory_store)
     system_prompt = SystemPromptContext()
     tool_context = ToolContext()
@@ -132,7 +128,7 @@ async def startup() -> None:
     register_channel(channel)
     logger.info("FeishuChannel connected (p2p single-chat)")
 
-    # 10. 注入 send_card 回调给 Scheduler（channel 准备好后）
+    # 10. Inject send_card callback into Scheduler
     async def send_card(chat_id: str, card_json: str) -> None:
         await channel.send_message(chat_id, card_json, msg_type="interactive")
 

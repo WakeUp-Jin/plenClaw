@@ -101,10 +101,10 @@ class ContextManager:
         return self._estimator.estimate_items(items)
 
     def clear_conversation(self) -> None:
-        """Clear short-term memory and tool context, starting a new session."""
+        """Clear short-term memory and tool context, starting a new conversation."""
         self._short_term.clear()
         self._tool_context.clear()
-        logger.info("Conversation cleared, new session started")
+        logger.info("Conversation cleared, new conversation started")
 
     def archive_tool_context(self) -> None:
         """Archive current tool context into short-term memory.
