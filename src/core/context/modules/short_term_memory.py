@@ -13,7 +13,7 @@ from typing import Any, Callable, Awaitable
 
 from core.context.base import BaseContext
 from core.context.types import ContextItem, CompressionResult, MessagePriority
-from core.context.storage.base import IContextStorage
+from storage.base import IContextStorage
 from core.context.utils.compressor import ContextCompressor
 from core.context.utils.token_estimator import TokenEstimator
 from utils import logger
@@ -34,7 +34,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         self._estimator = token_estimator or TokenEstimator()
         self._summary: str = ""
 
-        self._load_session()
+        self._load_conversation()
 
     # ------------------------------------------------------------------
     # Message operations
@@ -68,7 +68,6 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         if not self._items:
             return CompressionResult(compressed=False, reason="empty")
 
-        # Prepend existing summary to the items to compress
         items_with_context = list(self._items)
         if self._summary:
             items_with_context.insert(0, ContextItem(
@@ -85,11 +84,9 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         if not result.compressed:
             return result
 
-        # Persist checkpoint
         checkpoint_line = self._storage.count_lines() - result.kept_count
         self._storage.save_checkpoint(result.summary, checkpoint_line)
 
-        # Update in-memory state: keep only recent items
         self._summary = result.summary
         self._items = self._items[-result.kept_count:] if result.kept_count > 0 else []
 
@@ -100,15 +97,15 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         return result
 
     # ------------------------------------------------------------------
-    # Session management
+    # Conversation management
     # ------------------------------------------------------------------
 
     def clear(self) -> None:
-        """Start a new conversation session."""
+        """Start a new conversation, preserving old data on disk."""
         super().clear()
         self._summary = ""
-        self._storage.new_session()
-        logger.info("Short-term memory cleared, new session started")
+        self._storage.new_conversation()
+        logger.info("Short-term memory cleared, new conversation started")
 
     # ------------------------------------------------------------------
     # BaseContext interface
@@ -129,10 +126,10 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         return result
 
     # ------------------------------------------------------------------
-    # Internal: session loading
+    # Internal: conversation loading
     # ------------------------------------------------------------------
 
-    def _load_session(self) -> None:
+    def _load_conversation(self) -> None:
         checkpoint = self._storage.load_checkpoint()
 
         if checkpoint:
@@ -144,7 +141,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
                 for m in raw_messages
             ]
             logger.info(
-                "Loaded session with checkpoint: summary=%d chars, %d messages from line %d",
+                "Loaded conversation with checkpoint: summary=%d chars, %d messages from line %d",
                 len(self._summary), len(self._items), checkpoint_line,
             )
         else:
@@ -154,4 +151,4 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
                 ContextItem.from_message(m, source="history")
                 for m in raw_messages
             ]
-            logger.info("Loaded session: %d messages (no checkpoint)", len(self._items))
+            logger.info("Loaded conversation: %d messages (no checkpoint)", len(self._items))

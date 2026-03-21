@@ -79,7 +79,8 @@ class FeishuConfig:
 
 @dataclass
 class ChatConfig:
-    history_dir: str = "./data/chat_history"
+    conversations_dir: str = "./data/conversations"
+    memory_dir: str = "./data/memory"
     max_token_estimate: int = 60000
     compress_keep_ratio: float = 0.3
 
@@ -133,8 +134,12 @@ class AppConfig:
         return self.feishu.memory_folder_name
 
     @property
-    def chat_history_dir(self) -> str:
-        return self.chat.history_dir
+    def conversations_dir(self) -> str:
+        return self.chat.conversations_dir
+
+    @property
+    def memory_dir(self) -> str:
+        return self.chat.memory_dir
 
     @property
     def chat_max_token_estimate(self) -> int:

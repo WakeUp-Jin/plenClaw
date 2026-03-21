@@ -44,7 +44,8 @@
     }
   },
   "chat": {
-    "history_dir": "./data/chat_history",
+    "conversations_dir": "./data/conversations",
+    "memory_dir": "./data/memory",
     "max_token_estimate": 60000,
     "compress_keep_ratio": 0.3
   }
