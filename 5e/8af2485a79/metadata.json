@@ -1,0 +1,38 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "5e8af2485a79",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    ".env.example",
+    "config.json",
+    "docs/Components/LLM模块开发/LLM模块架构与开发指南.md",
+    "pyproject.toml",
+    "src/config/settings.py",
+    "src/core/agent/simple_agent.py",
+    "src/core/llm/__init__.py",
+    "src/core/llm/factory.py",
+    "src/core/llm/registry.py",
+    "src/core/llm/services/__init__.py",
+    "src/core/llm/services/base.py",
+    "src/core/llm/services/kimi_service.py",
+    "src/core/llm/services/openai_service.py",
+    "src/core/llm/services/volcengine_service.py",
+    "src/core/llm/types.py",
+    "src/core/llm/utils/llm_helpers.py",
+    "src/core/llm/utils/tool_loop.py",
+    "src/main.py",
+    "src/utils/__init__.py",
+    "src/utils/logger.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/5e/8af2485a79/0/metadata.json",
+      "transcript": "/5e/8af2485a79/0/full.jsonl",
+      "context": "/5e/8af2485a79/0/context.md",
+      "content_hash": "/5e/8af2485a79/0/content_hash.txt",
+      "prompt": "/5e/8af2485a79/0/prompt.txt"
+    }
+  ]
+}
