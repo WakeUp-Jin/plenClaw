@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "313187f4cb99",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/Components/上下文模块重构/00_架构总览.md",
+    "docs/Components/上下文模块重构/01_各模块详解.md",
+    "docs/Components/上下文模块重构/02_压缩与存储.md",
+    "src/core/agent/simple_agent.py",
+    "src/core/context/base.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/long_term_memory.py",
+    "src/core/context/modules/memory.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/modules/system_prompt.py",
+    "src/core/context/modules/tool_context.py",
+    "src/core/context/storage/__init__.py",
+    "src/core/context/storage/base.py",
+    "src/core/context/storage/jsonl_store.py",
+    "src/core/context/types.py",
+    "src/core/context/utils/__init__.py",
+    "src/core/context/utils/compressor.py",
+    "src/core/context/utils/message_sanitizer.py",
+    "src/core/context/utils/token_estimator.py",
+    "src/main.py",
+    "src/memory/memory_context.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/31/3187f4cb99/0/metadata.json",
+      "transcript": "/31/3187f4cb99/0/full.jsonl",
+      "context": "/31/3187f4cb99/0/context.md",
+      "content_hash": "/31/3187f4cb99/0/content_hash.txt",
+      "prompt": "/31/3187f4cb99/0/prompt.txt"
+    }
+  ]
+}

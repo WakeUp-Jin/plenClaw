@@ -1,0 +1,340 @@
+接下来我们来重构一下这个/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context，使用ce-context-management的技能规范，不过关于需要哪几种上下文我们需要讨论一下看看，系统提示词是需要的，并且这里有一点新玩意，要设计一种单独的上下文结构，然后提供一个方法可以转换为message数组需要的格式，但是整个系统流转的时候，使用的是单独的上下文结构，因为这个里面可以包含各种状态，系统提示词上下文模块是需要的、工具上下文也是需要的、记忆模块是需要的，上下文管理是需要的，里面提供压缩方法，提供上下文构建方法（里面也是有格式转换的方法，调用私有方法），我们一起讨论一下吧，系统提示词要支持动态加载，未来可能是以文件的形式加载系统提示词之类的，因为要提供给用户定义的空间，而不是单单由我们自己定义，或者说系统提示词大部分由我们定义，但是提供一个动态方法可以让用户定义部分系统提示词，所以这个系统提示词的模块也要好好的设计，计划里面加一个，完成任务之后要梳理一个文档放入到Components中，要在这个里面创建一个文件夹，里面放入本次需求开发的相关文档
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/context_module_refactor_cdf20b8b.plan.md" lines="1-324">
+     1|---
+     2|name: Context Module Refactor
+     3|overview: 基于 ce-context-management 技能规范，对 src/core/context 进行全面重构，引入 ContextItem 富数据结构、分段式系统提示词、双记忆模块、工具上下文管理、抽象存储层和统一的 ContextManager。
+     4|todos:
+     5|  - id: types
+     6|    content: "创建 types.py: 定义 ContextItem, PromptSegment, MessagePriority, CompressionConfig, CompressionResult 等类型"
+     7|    status: pending
+     8|  - id: base
+     9|    content: "重构 base.py: 实现泛型 BaseContext[T]，提供 add/get/clear/replace/count/format 等标准方法"
+    10|    status: pending
+    11|  - id: token-estimator
+    12|    content: "创建 utils/token_estimator.py: 封装 TokenEstimator 类，支持 ContextItem 和 dict 两种输入"
+    13|    status: pending
+    14|  - id: message-sanitizer
+    15|    content: "创建 utils/message_sanitizer.py: 实现 sanitize_messages() 和 validate_messages()"
+    16|    status: pending
+    17|  - id: compressor
+    18|    content: "创建 utils/compressor.py: 实现压缩策略（LLM 摘要 + 工具消息裁剪 + 分割点计算 + 工具调用边界调整）"
+    19|    status: pending
+    20|  - id: storage
+    21|    content: "创建 storage/base.py + storage/jsonl_store.py: 抽象存储接口 + 从 ChatStore 重构的 JSONL 实现"
+    22|    status: pending
+    23|  - id: system-prompt
+    24|    content: "重构 modules/system_prompt.py: 分段式 SystemPromptContext，支持 register/update/remove/enable/disable segment"
+    25|    status: pending
+    26|  - id: long-term-memory
+    27|    content: "创建 modules/long_term_memory.py: LongTermMemoryContext，对接 MemoryStore"
+    28|    status: pending
+    29|  - id: short-term-memory
+    30|    content: "创建 modules/short_term_memory.py: ShortTermMemoryContext，管理对话历史 + 压缩"
+    31|    status: pending
+    32|  - id: tool-context
+    33|    content: "创建 modules/tool_context.py: ToolContext，管理工具消息序列配对和清理"
+    34|    status: pending
+    35|  - id: context-manager
+    36|    content: "重构 manager.py: 协调所有模块，实现 get_context/_build_context_items/_to_messages/_sanitize"
+    37|    status: pending
+    38|  - id: agent-adapt
+    39|    content: 适配 SimpleAgent 和 tool_loop，确保与新 ContextManager 接口兼容
+    40|    status: pending
+    41|  - id: cleanup
+    42|    content: 清理旧代码：删除 chat_store.py 和 modules/memory.py，更新 memory/memory_context.py 的引用
+    43|    status: pending
+    44|  - id: docs
+    45|    content: 在 docs/Components/上下文模块重构/ 下创建架构总览、各模块详解、压缩与存储三篇文档
+    46|    status: pending
+    47|isProject: false
+    48|---
+    49|
+    50|# Context 模块重构计划
+    51|
+    52|## 背景与目标
+    53|
+    54|当前 `src/core/context` 模块较为简单：一个薄 BaseContext 抽象、一个 ContextManager 混合了消息管理/压缩/持久化逻辑、ChatStore 耦合了 JSONL 实现。重构目标是引入结构化的上下文管理体系，提升可扩展性和可维护性。
+    55|
+    56|## 核心设计决策
+    57|
+    58|### 1. ContextItem 富数据结构
+    59|
+    60|系统内部流转使用 `ContextItem` 而非原始 dict，最终通过 `to_message()` 转换为 LLM API 需要的 message 格式。
+    61|
+    62|```python
+    63|@dataclass
+    64|class ContextItem:
+    65|    role: str                    # "system" | "user" | "assistant" | "tool"
+    66|    content: str | None = None
+    67|    source: str = ""             # 来源标识: "system_prompt", "memory", "history", "tool"
+    68|    priority: int = 2            # 1(LOW) ~ 4(CRITICAL)
+    69|    created_at: float = 0.0     
+    70|    token_estimate: int = 0     
+    71|    metadata: dict = field(default_factory=dict)
+    72|    # tool 相关
+    73|    tool_calls: list = field(default_factory=list)
+    74|    tool_call_id: str | None = None
+    75|    name: str | None = None
+    76|
+    77|    def to_message(self) -> dict[str, Any]:
+    78|        """转换为 OpenAI chat message 格式"""
+    79|```
+    80|
+    81|所有上下文模块内部存储 `ContextItem`，BaseContext 的 `format()` 返回 `list[ContextItem]`，ContextManager 最终统一调用 `to_message()` 转换。
+    82|
+    83|### 2. 重构后目录结构
+    84|
+    85|```
+    86|src/core/context/
+    87|├── types.py                       # ContextItem, MessagePriority, CompressionConfig 等类型定义
+    88|├── base.py                        # BaseContext[T] 泛型抽象基类
+    89|├── manager.py                     # ContextManager 统一管理器
+    90|├── modules/
+    91|│   ├── system_prompt.py           # SystemPromptContext (分段式)
+    92|│   ├── long_term_memory.py        # LongTermMemoryContext (长期记忆)
+    93|│   ├── short_term_memory.py       # ShortTermMemoryContext (短期记忆 + 压缩)
+    94|│   └── tool_context.py            # ToolContext (工具消息序列管理)
+    95|├── utils/
+    96|│   ├── token_estimator.py         # Token 估算器
+    97|│   ├── message_sanitizer.py       # 消息清理与验证 (sanitize + validate)
+    98|│   └── compressor.py              # 压缩策略实现 (LLM摘要 / 工具消息裁剪)
+    99|├── storage/
+   100|│   ├── base.py                    # IContextStorage 抽象接口
+   101|│   └── jsonl_store.py             # JSONL 实现 (重构自 ChatStore)
+   102|└── __init__.py
+   103|```
+   104|
+   105|### 3. BaseContext 泛型基类
+   106|
+   107|改造现有 `BaseContext`，支持泛型存储项，提供统一的 CRUD 操作：
+   108|
+   109|```python
+   110|class BaseContext(ABC, Generic[T]):
+   111|    def __init__(self):
+   112|        self._items: list[T] = []
+   113|    
+   114|    def add(self, item: T) -> None
+   115|    def get(self, index: int) -> T | None
+   116|    def get_all(self) -> list[T]
+   117|    def clear(self) -> None
+   118|    def remove_last(self) -> T | None
+   119|    def replace(self, items: list[T]) -> None
+   120|    def count(self) -> int
+   121|    def is_empty(self) -> bool
+   122|    
+   123|    @abstractmethod
+   124|    def format(self) -> list[ContextItem]:
+   125|        """子类实现：将存储项格式化为 ContextItem 列表"""
+   126|```
+   127|
+   128|### 4. SystemPromptContext (分段式设计)
+   129|
+   130|支持多个 prompt segment，每段有 ID、优先级、内容。核心段由系统定义，动态段可由外部注册。
+   131|
+   132|```python
+   133|@dataclass
+   134|class PromptSegment:
+   135|    id: str                # 唯一标识: "core", "tools_desc", "user_custom", "memory_inject"
+   136|    content: str
+   137|    priority: int = 5      # 越大越靠前
+   138|    enabled: bool = True
+   139|
+   140|class SystemPromptContext(BaseContext[PromptSegment]):
+   141|    def register_segment(self, segment: PromptSegment) -> None
+   142|    def update_segment(self, segment_id: str, content: str) -> None
+   143|    def remove_segment(self, segment_id: str) -> None
+   144|    def enable_segment(self, segment_id: str) -> None
+   145|    def disable_segment(self, segment_id: str) -> None
+   146|    def format(self) -> list[ContextItem]:
+   147|        """按优先级排序，合并为一条 system ContextItem"""
+   148|```
+   149|
+   150|核心段（`core`）包含现有的 `DEFAULT_SYSTEM_PROMPT`，用户自定义段通过 `register_segment` 注入。未来可扩展为从文件加载。
+   151|
+   152|### 5. 记忆模块 (双模块)
+   153|
+   154|**LongTermMemoryContext** - 对接现有 MemoryStore（飞书文档），只读注入上下文：
+   155|
+   156|```python
+   157|class LongTermMemoryContext(BaseContext[str]):
+   158|    def __init__(self, memory_store: MemoryStore):
+   159|        self._store = memory_store
+   160|    
+   161|    def refresh(self) -> None:
+   162|        """从 MemoryStore 刷新缓存"""
+   163|    
+   164|    def format(self) -> list[ContextItem]:
+   165|        """格式化为 source='long_term_memory' 的 ContextItem"""
+   166|```
+   167|
+   168|**ShortTermMemoryContext** - 管理对话历史 + 压缩，替代现有 ContextManager 中的 `_messages` + `_summary`：
+   169|
+   170|```python
+   171|class ShortTermMemoryContext(BaseContext[ContextItem]):
+   172|    def __init__(self, storage: IContextStorage, compressor: ContextCompressor):
+   173|        self._storage = storage
+   174|        self._compressor = compressor
+   175|        self._summary: str = ""
+   176|    
+   177|    def append_message(self, item: ContextItem) -> None
+   178|    def load_session(self) -> None
+   179|    async def compress(self, summarize_fn) -> CompressionResult
+   180|    def needs_compression(self, max_tokens: int, threshold: float) -> bool
+   181|    def estimate_tokens(self) -> int
+   182|    def format(self) -> list[ContextItem]:
+   183|        """返回 [摘要(如有)] + 历史消息"""
+   184|```
+   185|
+   186|### 6. ToolContext (工具消息序列管理)
+   187|
+   188|管理当前工具调用链的配对关系和清理：
+   189|
+   190|```python
+   191|class ToolContext(BaseContext[ContextItem]):
+   192|    def add_tool_call(self, assistant_msg: ContextItem) -> None
+   193|    def add_tool_response(self, tool_msg: ContextItem) -> None
+   194|    def has_pending_calls(self) -> bool
+   195|    def sanitize(self) -> None
+   196|        """清理不完整的工具调用链"""
+   197|    def archive_to(self, short_term: ShortTermMemoryContext) -> None
+   198|        """将当前工具链归档到短期记忆"""
+   199|    def format(self) -> list[ContextItem]
+   200|```
+   201|
+   202|### 7. ContextManager (统一管理器)
+   203|
+   204|协调所有上下文模块，提供构建和转换方法：
+   205|
+   206|```python
+   207|class ContextManager:
+   208|    def __init__(
+   209|        self,
+   210|        system_prompt: SystemPromptContext,
+   211|        long_term_memory: LongTermMemoryContext | None,
+   212|        short_term_memory: ShortTermMemoryContext,
+   213|        tool_context: ToolContext,
+   214|        compression_config: CompressionConfig,
+   215|    )
+   216|    
+   217|    # --- 公开方法 (Agent 调用) ---
+   218|    def append_message(self, message: dict) -> None
+   219|    def get_context(self) -> list[dict[str, Any]]:
+   220|        """构建 LLM 上下文: 内部调用 _build_context_items() + _to_messages()"""
+   221|    
+   222|    def needs_compression(self) -> bool
+   223|    async def compress(self, summarize_fn) -> None
+   224|    def clear_conversation(self) -> None
+   225|    def estimate_tokens(self) -> int
+   226|    
+   227|    # --- 私有方法 ---
+   228|    def _build_context_items(self) -> list[ContextItem]:
+   229|        """组装顺序: system_prompt -> long_term_memory -> short_term_memory -> tool_context"""
+   230|    
+   231|    def _to_messages(self, items: list[ContextItem]) -> list[dict[str, Any]]:
+   232|        """ContextItem[] -> message dict[]，含 sanitize"""
+   233|    
+   234|    def _sanitize(self, messages: list[dict]) -> list[dict]:
+   235|        """调用 message_sanitizer 保证 tool_calls 配对"""
+   236|```
+   237|
+   238|`get_context()` 对外接口保持返回 `list[dict]`，与现有 Agent 代码兼容，内部走 ContextItem 流转。
+   239|
+   240|### 8. 存储抽象层
+   241|
+   242|```python
+   243|# storage/base.py
+   244|class IContextStorage(ABC):
+   245|    @abstractmethod
+   246|    def append(self, message: dict) -> None
+   247|    @abstractmethod
+   248|    def load_all(self) -> list[dict]
+   249|    @abstractmethod
+   250|    def load_from_line(self, line: int) -> list[dict]
+   251|    @abstractmethod
+   252|    def save_checkpoint(self, summary: str, line: int) -> None
+   253|    @abstractmethod
+   254|    def load_checkpoint(self) -> dict | None
+   255|    @abstractmethod
+   256|    def new_session(self) -> None
+   257|
+   258|# storage/jsonl_store.py
+   259|class JsonlContextStorage(IContextStorage):
+   260|    """重构自现有 ChatStore，实现 IContextStorage 接口"""
+   261|```
+   262|
+   263|### 9. 工具方法模块
+   264|
+   265|- `**[utils/token_estimator.py](src/core/context/utils/token_estimator.py)**`: 从 manager.py 中提取的 `_estimate_tokens` 和 `_estimate_messages_tokens`，封装为 `TokenEstimator` 类，支持 ContextItem 和 message dict 两种输入
+   266|- `**[utils/message_sanitizer.py](src/core/context/utils/message_sanitizer.py)**`: `sanitize_messages()` + `validate_messages()`，保证 tool_calls/tool 配对完整性
+   267|- `**[utils/compressor.py](src/core/context/utils/compressor.py)**`: 压缩策略实现，包含 LLM 摘要生成和工具消息裁剪（含分割点计算 + 工具调用边界调整）
+   268|
+   269|### 10. Agent 侧适配
+   270|
+   271|`[src/core/agent/simple_agent.py](src/core/agent/simple_agent.py)` 和 `[src/core/llm/utils/tool_loop.py](src/core/llm/utils/tool_loop.py)` 需要适配：
+   272|
+   273|- `SimpleAgent.run()` 中对 `ContextManager` 的调用接口保持不变（`append_message`, `get_context`, `needs_compression`, `compress`）
+   274|- `tool_loop` 返回的 intermediate_messages 通过 `ContextManager.append_message()` 写入，内部自动路由到 ToolContext 或 ShortTermMemory
+   275|
+   276|### 11. 文档输出
+   277|
+   278|完成重构后，在 `docs/Components/` 下创建 `上下文模块重构/` 文件夹，包含：
+   279|
+   280|- `00_架构总览.md` - 模块架构图、数据流、ContextItem 设计说明
+   281|- `01_各模块详解.md` - 每个模块的职责、接口、使用示例
+   282|- `02_压缩与存储.md` - 压缩策略、存储抽象、ChatStore 迁移说明
+   283|
+   284|## 数据流概览
+   285|
+   286|```mermaid
+   287|flowchart TD
+   288|    UserInput["用户输入"] --> Agent["SimpleAgent.run()"]
+   289|    Agent --> AppendMsg["ctx.append_message()"]
+   290|    AppendMsg --> ShortTerm["ShortTermMemoryContext"]
+   291|    Agent --> GetCtx["ctx.get_context()"]
+   292|    GetCtx --> Build["_build_context_items()"]
+   293|    
+   294|    Build --> SysPrompt["SystemPromptContext.format()"]
+   295|    Build --> LongMem["LongTermMemoryContext.format()"]
+   296|    Build --> ShortMem["ShortTermMemoryContext.format()"]
+   297|    Build --> ToolCtx["ToolContext.format()"]
+   298|    
+   299|    SysPrompt --> Items["list[ContextItem]"]
+   300|    LongMem --> Items
+   301|    ShortMem --> Items
+   302|    ToolCtx --> Items
+   303|    
+   304|    Items --> ToMsg["_to_messages()"]
+   305|    ToMsg --> Sanitize["sanitize_messages()"]
+   306|    Sanitize --> Messages["list[dict] -> LLM"]
+   307|    
+   308|    Messages --> LLM["LLM API"]
+   309|    LLM --> ToolLoop["tool_loop"]
+   310|    ToolLoop --> ToolCtxAppend["ToolContext.add_tool_call/response"]
+   311|    ToolLoop --> Archive["ToolContext.archive_to(short_term)"]
+   312|```
+   313|
+   314|
+   315|
+   316|## 迁移策略
+   317|
+   318|- `get_context()` 返回值类型不变（`list[dict]`），Agent 侧无需大改
+   319|- `append_message()` 接口不变，内部做 dict -> ContextItem 转换
+   320|- 现有 `ChatStore` 重命名为 `JsonlContextStorage` 并实现 `IContextStorage` 接口
+   321|- `memory/memory_context.py` 的 `MemoryContext` 可以保留作为向后兼容的别名，指向新的 `LongTermMemoryContext`
+   322|- `core/context/modules/memory.py` 删除（功能迁移到 `long_term_memory.py`）
+   323|
+   324|
+</code_selection>
+
+</attached_files>
+
+Context 模块重构计划
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
