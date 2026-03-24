@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from core.engine import ExecutionEngine
 from core.tool.tools.bash import BashTool
 from core.tool.tools.read_file import ReadFileTool
+from core.tool.tools.list_files import ListFilesTool
 from utils.logger import get_logger
 from utils.token_counter import TokenCounter
 
@@ -86,6 +87,7 @@ class Agent:
         """注册 tools/ 目录下的内置工具。"""
         self._tool_manager.register(ReadFileTool)
         self._tool_manager.register(BashTool)
+        self._tool_manager.register(ListFilesTool)
         logger.info("Built-in tools registered: %s", self._tool_manager.list_tools())
 
     def _handle_clear(self) -> str:

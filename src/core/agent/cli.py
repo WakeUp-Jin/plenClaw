@@ -15,7 +15,7 @@ from utils.logger import logger, set_log_level
 
 from core.llm.registry import LLMServiceRegistry
 from core.context.manager import ContextManager
-from core.context.types import CompressionConfig, PromptSegment
+from core.context.types import CompressionConfig
 from core.context.modules.system_prompt import SystemPromptContext
 from core.context.modules.short_term_memory import ShortTermMemoryContext
 from core.context.modules.tool_context import ToolContext
@@ -25,7 +25,6 @@ from core.tool.scheduler import ToolScheduler, ToolSchedulerConfig
 from core.tool.approval import ApprovalStore
 from core.tool.types import ApprovalMode
 from core.agent.agent import Agent
-from core.skill.scanner import scan_skills, build_catalog
 
 from storage.conversation_store import ConversationStore
 
@@ -41,16 +40,6 @@ def _build_agent() -> Agent:
     compressor = ContextCompressor()
     short_term = ShortTermMemoryContext(storage=conversation_storage, compressor=compressor)
     system_prompt = SystemPromptContext()
-
-    skills = scan_skills(Path.cwd())
-    catalog = build_catalog(skills)
-    if catalog:
-        system_prompt.register_segment(PromptSegment(
-            id="skill_catalog",
-            content=catalog,
-            priority=80,
-        ))
-
     tool_context = ToolContext()
 
     compression_config = CompressionConfig(
@@ -64,6 +53,8 @@ def _build_agent() -> Agent:
         tool_context=tool_context,
         compression_config=compression_config,
     )
+
+    context_manager.init_skills(Path.cwd())
 
     approval_store = ApprovalStore()
     scheduler = ToolScheduler(

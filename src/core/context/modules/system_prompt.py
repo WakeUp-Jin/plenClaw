@@ -16,7 +16,7 @@ from core.context.base import BaseContext
 from core.context.types import ContextItem, MessagePriority, PromptSegment
 
 DEFAULT_SYSTEM_PROMPT = """\
-你是 PineClaw，一个基于飞书的个人 AI 助手。你可以帮助用户：
+你是 PineClaw，一个AI 助手。你可以帮助用户：
 
 - 创建、读取、修改飞书文档
 - 创建和操作多维表格（Bitable）
@@ -63,6 +63,7 @@ class SystemPromptContext(BaseContext[PromptSegment]):
 
     def register_segment(self, segment: PromptSegment) -> None:
         """Register a new segment.  Replaces existing segment with same id."""
+        # [表达式 for 变量 in 可迭代对象 if 条件]
         self._items = [s for s in self._items if s.id != segment.id]
         self.add(segment)
 

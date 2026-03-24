@@ -10,14 +10,16 @@ dicts via ``_to_messages()``.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from core.context.types import ContextItem, CompressionConfig, MessagePriority
+from core.context.types import ContextItem, CompressionConfig, MessagePriority, PromptSegment
 from core.context.modules.system_prompt import SystemPromptContext
 from core.context.modules.short_term_memory import ShortTermMemoryContext
 from core.context.modules.tool_context import ToolContext
 from core.context.utils.message_sanitizer import sanitize_messages
 from core.context.utils.token_estimator import TokenEstimator
+from core.skill.scanner import scan_skills, build_catalog
 from utils import logger
 
 from typing import TYPE_CHECKING
@@ -113,6 +115,28 @@ class ContextManager:
         """
         if not self._tool_context.is_empty():
             self._tool_context.archive_to(self._short_term)
+
+    # ------------------------------------------------------------------
+    # Skill initialization
+    # ------------------------------------------------------------------
+
+    def init_skills(self, project_root: Path) -> None:
+        """扫描 Skill 目录，构建 catalog 并注册为系统提示词片段。
+
+        调用 scan_skills() 从项目级和用户级目录发现所有 SKILL.md，
+        再用 build_catalog() 生成 XML 格式的目录文本，
+        最后通过 SystemPromptContext.register_segment() 注入系统提示词。
+
+        如果没有发现任何 Skill，则不注入任何内容。
+        """
+        skills = scan_skills(project_root)
+        catalog = build_catalog(skills)
+        if catalog:
+            self._system_prompt.register_segment(PromptSegment(
+                id="skill_catalog",
+                content=catalog,
+                priority=80,
+            ))
 
     # ------------------------------------------------------------------
     # Module accessors

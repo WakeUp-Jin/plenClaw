@@ -62,7 +62,8 @@ def scan_skills(project_root: Path) -> list[SkillMeta]:
     for skills_dir in search_dirs:
         if not skills_dir.is_dir():
             continue
-
+        
+        # 使用iterdir方法遍历该文件夹下面的全部文件
         for child in sorted(skills_dir.iterdir()):
             if not child.is_dir() or child.name in _SKIP_DIRS:
                 continue
@@ -121,10 +122,11 @@ def build_catalog(skills: list[SkillMeta]) -> str:
         desc = xml_escape(skill.description.strip())
         path = xml_escape(str(skill.location))
         name = xml_escape(skill.name)
-        lines.append(
-            f'  <skill name="{name}" fullPath="{path}">'
-            f"{desc}</skill>"
-        )
+        lines.append(f'  <skill>')
+        lines.append(f'    <name>{name}</name>')
+        lines.append(f'    <description>{desc}</description>')
+        lines.append(f'    <location>{path}</location>')
+        lines.append(f'  </skill>')
 
     lines.append("</available_skills>")
     lines.append("</agent_skills>")
