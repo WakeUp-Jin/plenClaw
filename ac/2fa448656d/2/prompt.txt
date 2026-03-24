@@ -1,0 +1,32 @@
+@dataclass，这个是做什么的呢？
+
+---
+
+帮我解释一下这个SystemPromtContext类吧，__init__这个方法在初始化会自动执行是吗，还有这个BaseContext类是做什么的呢
+
+---
+
+self._items = [s for s in self._items if s.id != segment.id]
+        self.add(segment)，上面那个代码在做什么呢？
+
+---
+
+可以详细的说一下列表推导式吗？为什么要s第一个这个表达式呢？
+
+---
+
+"logger" 是未知的导入符号basedpyrightreportAttributeAccessIssue
+这个bug是因为什么，在manager.py中
+
+---
+
+很奇怪，为什么python的里面，一个文件夹要有/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/tool/tools/read_file/__pycache__和/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/tool/tools/read_file/__init__.py，不可以直接导出？
+
+---
+
+# 读取文件夹下面的文件夹和文件
+这个怎么实现呢？
+
+---
+
+folder=Path(folder_path),最大长度可以在这里限制吗？
