@@ -1,0 +1,13 @@
+# Session Context
+
+## User Prompts
+
+### Prompt 1
+
+"should_confirm" 参数不存在basedpyrightreportCallIssue
+这个bug是什么意思
+
+### Prompt 2
+
+parameters.to_dict()，这个代码什么意思呢？
+
