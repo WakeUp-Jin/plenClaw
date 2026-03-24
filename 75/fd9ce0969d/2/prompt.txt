@@ -1,0 +1,311 @@
+/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Components/支持Skill功能的需求实现
+
+看看这个，在结合现在看看，我想要自建实现自己的Agent能够支持Skill的加载，在看看这个文档：/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Context/AgentSkills的客户端支持开发.md
+
+一起来设计一下这个skill的支持客户端如何实现，最终验证效果就是我去，npx skills add https://github.com/anthropics/skills --skill frontend-design安装之后，可以直接使用这个skill在我的Agent当中，开始吧
+
+特别的是两点：
+我理解的skill是渐进式加载的，这个我可以理解
+第二是有些Skill会支持scripts脚本的执行，这个是需要我开发一个命令行工具吧
+
+---
+
+第二部分：CLI 工具 — pineclaw-skills
+可以不用构建这个cli工具吗？可以使用默认支持的，Supported Agents  支持的代理
+Skills can be installed to any of these agents:
+技能可安装至以下任一代理：
+
+Agent  代理	--agent	Project Path  项目路径	Global Path  全局路径
+Amp, Kimi Code CLI, Replit, Universal
+Amp、Kimi Code CLI、Replit、Universal	amp, kimi-cli, replit, universal	.agents/skills/	~/.config/agents/skills/
+Antigravity  反重力	antigravity	.agents/skills/	~/.gemini/antigravity/skills/
+Augment  增强	augment	.augment/skills/	~/.augment/skills/
+Claude Code	claude-code	.claude/skills/	~/.claude/skills/
+
+我们就默认支持claudecode的skill路径，也就是说pineclaw加载路径的选择里面加一个claude/skills路径，这样不就可以啦，
+
+关于skill的执行流程我觉得你构建的有点问题，渐进式加载没有问题，先提供文件的元信息给大模型是完全合理的，但是SkillManager这个管理工具设计的太多了
+
+其实你只要增加一个读取工具是不是就可以啦，重点是你要说清楚skill的渐进式加载策略是什么，模型先读取什么文件夹，读取哪些东西，放入到哪里，后续模型需要在读取第二层的时候，怎么读取，语法中在系统提示词，使用xml语法是不是更好，并且有两种方式，也就是skill的目录元信息放到哪里：
+
+Two approaches are common:
+两种方法较为常见：
+System prompt section: Add the catalog as a labeled section in the system prompt, preceded by brief instructions on how to use skills. This is the simplest approach and works with any model that has access to a file-reading tool.
+系统提示部分：将技能目录作为一个带标签的部分添加到系统提示中，并在前面简要说明如何使用技能。这是最简单的方法，适用于任何具备文件读取工具的模型。
+Tool description: Embed the catalog in the description of a dedicated skill-activation tool (see Step 4). This keeps the system prompt clean and naturally couples discovery with activation.
+工具描述：将目录嵌入到专用技能激活工具的描述中（参见步骤 4）。这样可以保持系统提示的简洁性，并自然地将技能发现与激活结合起来。
+Both work. System prompt placement is simpler and more broadly compatible; tool description embedding is cleaner when you have a dedicated activation tool.
+两种方法都可行。系统提示放置法更简单且兼容性更广；当您拥有专用激活工具时，工具描述嵌入法则更为简洁。
+
+仔细分析这个：/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Context/AgentSkills的客户端支持开发.md
+
+---
+
+新方案是什么样子，还有，使用XML语法包裹skill的元信息提供给模型的时候，是要加点说明的吧，告诉模型怎么使用提示之类的，/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Context/AgentSkills的客户端支持开发.md
+
+重新制定一个计划我看看
+
+---
+
+还有Bash工具是不是也要考虑开发一下呢？写入到计划里面去
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/skill%E5%AE%A2%E6%88%B7%E7%AB%AF%E6%94%AF%E6%8C%81v2_d28903df.plan.md" lines="1-242">
+     1|---
+     2|name: Skill客户端支持v2
+     3|overview: 为 PineClaw Agent 添加 Skill 支持。核心思路极简：Python 代码只做"扫描目录 + 构建 catalog 注入 system prompt"，模型自己用 ReadFile 和 Bash 完成后续加载和执行。安装 Skill 用社区现有的 npx agent-skills-cli。
+     4|todos:
+     5|  - id: skill-module
+     6|    content: 新建 src/core/skill/ 模块：__init__.py + types.py（SkillMeta dataclass）+ scanner.py（scan_skills 扫描6个路径 + build_catalog 构建 XML catalog 含行为指令）
+     7|    status: pending
+     8|  - id: bash-tool
+     9|    content: 新建 src/core/tool/tools/bash/ 模块：BashTool 定义 + executor（subprocess.run），在 Agent._register_tools() 中注册
+    10|    status: pending
+    11|  - id: integration
+    12|    content: 修改 cli.py _build_agent()：调用 scan_skills + build_catalog，注入 PromptSegment(id='skill_catalog', priority=80)；确认 pyyaml 依赖
+    13|    status: pending
+    14|  - id: e2e-verify
+    15|    content: 用 npx agent-skills-cli 安装 frontend-design 到 ~/.claude/skills/，启动 make cli 验证完整流程
+    16|    status: pending
+    17|isProject: false
+    18|---
+    19|
+    20|# PineClaw Skill 客户端支持方案
+    21|
+    22|## 设计理念
+    23|
+    24|官方文档定义了两种激活方式。我们选择 **File-read activation**（最简单的一种）：
+    25|
+    26|> The model calls its standard file-read tool with the SKILL.md path from the catalog.
+    27|> No special infrastructure needed.
+    28|
+    29|PineClaw 已有 `ReadFile` 工具。所以 **Python 代码只负责 Tier 1（告诉模型有哪些 Skill）**，Tier 2（读 SKILL.md）和 Tier 3（读 references / 执行 scripts）完全由模型通过现有工具自主完成。
+    30|
+    31|---
+    32|
+    33|## 渐进式三层加载
+    34|
+    35|```mermaid
+    36|graph LR
+    37|    subgraph tier1 ["Tier 1: Catalog — 代码负责"]
+    38|        A["启动时扫描目录"] --> B["解析 frontmatter"]
+    39|        B --> C["构建 XML catalog + 行为指令"]
+    40|        C --> D["注入 system prompt segment"]
+    41|    end
+    42|
+    43|    subgraph tier2 ["Tier 2: Instructions — 模型自主"]
+    44|        E["模型看到 catalog 描述"] --> F["模型判断相关"]
+    45|        F --> G["模型调用 ReadFile(SKILL.md 路径)"]
+    46|        G --> H["获得完整 Skill 指令"]
+    47|    end
+    48|
+    49|    subgraph tier3 ["Tier 3: Resources — 模型自主"]
+    50|        H --> I["SKILL.md 引用 scripts/xxx.sh"]
+    51|        I --> J["模型调用 Bash 执行"]
+    52|        H --> K["SKILL.md 引用 references/yyy.md"]
+    53|        K --> L["模型调用 ReadFile 读取"]
+    54|    end
+    55|```
+    56|
+    57|---
+    58|
+    59|## Skill 安装方式（不自建 CLI）
+    60|
+    61|直接用社区的 `agent-skills-cli`，它原生支持 Claude Code 路径：
+    62|
+    63|```bash
+    64|npx agent-skills-cli add anthropics/skills --skill frontend-design -a claude-code
+    65|# 安装到 ~/.claude/skills/frontend-design/SKILL.md
+    66|```
+    67|
+    68|PineClaw 扫描路径包含 `~/.claude/skills/`，自动发现。
+    69|
+    70|---
+    71|
+    72|## 注入 system prompt 的具体内容
+    73|
+    74|这是整个方案的核心产物。当扫描到 Skill 后，以下 XML 文本作为一个 `PromptSegment` 注入 system prompt：
+    75|
+    76|```xml
+    77|<agent_skills>
+    78|The following skills provide specialized instructions for specific tasks.
+    79|When a task matches a skill's description, use the ReadFile tool to load
+    80|the SKILL.md at the listed fullPath before proceeding.
+    81|When a skill's instructions reference relative paths (like scripts/run.sh
+    82|or references/guide.md), resolve them against the skill's directory
+    83|(the parent directory of the SKILL.md file) and use absolute paths
+    84|in tool calls.
+    85|Only load a skill when the current task is relevant. Do NOT load all
+    86|skills preemptively.
+    87|
+    88|<available_skills>
+    89|  <skill name="frontend-design" fullPath="/Users/xjk/.claude/skills/frontend-design/SKILL.md">
+    90|    Create distinctive, production-grade frontend interfaces with high design quality.
+    91|    Use this skill when the user asks to build web components, pages, or applications.
+    92|  </skill>
+    93|  <skill name="backend-api" fullPath="/Users/xjk/.agents/skills/backend-api/SKILL.md">
+    94|    Provides backend API development guidance with scaffolding support.
+    95|    Use when the user asks to create API, implement routes, or build backend services.
+    96|  </skill>
+    97|</available_skills>
+    98|</agent_skills>
+    99|```
+   100|
+   101|结构说明：
+   102|- `<agent_skills>` 根标签，包含**行为指令**和**技能列表**
+   103|- 行为指令告诉模型三件事：(1) 用 ReadFile 加载 SKILL.md，(2) 相对路径要转成绝对路径，(3) 只在相关时加载
+   104|- `<available_skills>` 包含所有发现的 Skill
+   105|- 每个 `<skill>` 有 `name`（标识）、`fullPath`（模型用来 ReadFile 的路径）、内部文本是 description
+   106|- 如果没发现任何 Skill，**不注入这段内容**（避免空标签困惑模型）
+   107|
+   108|---
+   109|
+   110|## 扫描路径（按优先级）
+   111|
+   112|| 优先级 | 路径 | 说明 |
+   113||--------|------|------|
+   114|| 1 | `<project>/.pineclaw/skills/` | PineClaw 专属项目级 |
+   115|| 2 | `<project>/.agents/skills/` | 跨客户端标准项目级 |
+   116|| 3 | `<project>/.claude/skills/` | 兼容 Claude Code 项目级 |
+   117|| 4 | `~/.pineclaw/skills/` | PineClaw 专属用户级 |
+   118|| 5 | `~/.agents/skills/` | 跨客户端标准用户级 |
+   119|| 6 | `~/.claude/skills/` | 兼容 Claude Code 用户级 |
+   120|
+   121|同名 Skill 靠前的优先级胜出（项目级覆盖用户级），后发现的同名 Skill 跳过并打 warning。
+   122|
+   123|---
+   124|
+   125|## 需要新建/修改的文件
+   126|
+   127|### 新建 1: `src/core/skill/__init__.py`
+   128|
+   129|空文件，使 `core.skill` 成为 Python 包。
+   130|
+   131|### 新建 2: `src/core/skill/types.py`
+   132|
+   133|```python
+   134|@dataclass
+   135|class SkillMeta:
+   136|    name: str            # frontmatter 的 name 字段
+   137|    description: str     # frontmatter 的 description 字段
+   138|    location: Path       # SKILL.md 的绝对路径
+   139|```
+   140|
+   141|只存最小必要的三个字段。`location` 的父目录就是 Skill 根目录，不需要单独存。
+   142|
+   143|### 新建 3: `src/core/skill/scanner.py`
+   144|
+   145|两个纯函数：
+   146|
+   147|**`scan_skills(project_root: Path) -> list[SkillMeta]`**
+   148|- 按优先级顺序扫描 6 个路径
+   149|- 每个路径下查找**一级子目录中的 `SKILL.md`**
+   150|- 解析 YAML frontmatter，提取 name + description
+   151|- 畸形 YAML 容错：冒号值未引用时 fallback 处理
+   152|- 缺少 description 的 Skill 跳过（description 是 catalog 的核心）
+   153|- 同名去重：先发现的优先
+   154|
+   155|**`build_catalog(skills: list[SkillMeta]) -> str`**
+   156|- 输入 SkillMeta 列表，输出上面展示的完整 XML 字符串
+   157|- 空列表时返回空字符串
+   158|
+   159|### 新建 4: `src/core/tool/tools/bash/__init__.py`
+   160|
+   161|导出 `BashTool`。
+   162|
+   163|### 新建 5: `src/core/tool/tools/bash/definition.py`
+   164|
+   165|`BashTool` 的 `InternalTool` 定义，参数：`command`（必填）、`timeout`（可选，默认 30s）。
+   166|
+   167|### 新建 6: `src/core/tool/tools/bash/executor.py`
+   168|
+   169|`subprocess.run` 执行命令，返回 stdout + stderr。超时处理、错误码处理。
+   170|
+   171|### 修改 1: [src/core/agent/agent.py](src/core/agent/agent.py)
+   172|
+   173|`_register_tools()` 方法中新增一行注册 BashTool：
+   174|
+   175|```python
+   176|from core.tool.tools.bash import BashTool
+   177|self._tool_manager.register(BashTool)
+   178|```
+   179|
+   180|### 修改 2: [src/core/agent/cli.py](src/core/agent/cli.py)
+   181|
+   182|`_build_agent()` 函数中，在创建 `SystemPromptContext` 后，扫描 Skill 并注入 catalog segment：
+   183|
+   184|```python
+   185|from core.skill.scanner import scan_skills, build_catalog
+   186|from core.context.types import PromptSegment
+   187|
+   188|skills = scan_skills(Path.cwd())
+   189|catalog = build_catalog(skills)
+   190|if catalog:
+   191|    system_prompt.register_segment(PromptSegment(
+   192|        id="skill_catalog",
+   193|        content=catalog,
+   194|        priority=80,  # 低于 core prompt(100)，高于其他动态段
+   195|    ))
+   196|```
+   197|
+   198|---
+   199|
+   200|## 依赖确认
+   201|
+   202|需要 `pyyaml` 来解析 frontmatter。检查 `pyproject.toml` 是否已包含，若无需添加。
+   203|
+   204|---
+   205|
+   206|## 验证流程
+   207|
+   208|```bash
+   209|# 1. 用社区 CLI 安装一个 Skill
+   210|npx agent-skills-cli add anthropics/skills --skill frontend-design -a claude-code
+   211|
+   212|# 2. 确认安装到位
+   213|cat ~/.claude/skills/frontend-design/SKILL.md
+   214|
+   215|# 3. 启动 PineClaw CLI
+   216|make cli
+   217|
+   218|# 4. 和 Agent 对话，观察是否：
+   219|#    a) system prompt 包含 <agent_skills> catalog
+   220|#    b) 模型自主调用 ReadFile 加载 SKILL.md
+   221|#    c) 模型按 Skill 指令工作
+   222|#    d) 模型需要时调用 Bash 执行 scripts
+   223|```
+   224|
+   225|---
+   226|
+   227|## 改动量
+   228|
+   229|| 文件 | 操作 | 行数 |
+   230||------|------|------|
+   231|| `src/core/skill/__init__.py` | 新建 | ~1 |
+   232|| `src/core/skill/types.py` | 新建 | ~15 |
+   233|| `src/core/skill/scanner.py` | 新建 | ~90 |
+   234|| `src/core/tool/tools/bash/__init__.py` | 新建 | ~1 |
+   235|| `src/core/tool/tools/bash/definition.py` | 新建 | ~30 |
+   236|| `src/core/tool/tools/bash/executor.py` | 新建 | ~45 |
+   237|| `src/core/agent/agent.py` | 修改 | +3 行 |
+   238|| `src/core/agent/cli.py` | 修改 | +10 行 |
+   239|| `pyproject.toml` | 可能修改 | +1 行 (pyyaml) |
+   240|
+   241|**总计约 195 行新代码 + 14 行修改**。
+   242|
+</code_selection>
+
+</attached_files>
+
+PineClaw Skill 客户端支持方案
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+继续
