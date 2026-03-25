@@ -1,0 +1,33 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "658881d42ff1",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docker-compose.yml",
+    "docs/Components/存储架构设计/存储架构设计.md",
+    "src/config/settings.py",
+    "src/core/agent/agent.py",
+    "src/core/agent/cli.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/types.py",
+    "src/core/engine/__init__.py",
+    "src/core/engine/engine.py",
+    "src/core/llm/registry.py",
+    "src/core/llm/types.py",
+    "src/main.py",
+    "src/storage/base.py",
+    "src/storage/short_memory_store.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/65/8881d42ff1/0/metadata.json",
+      "transcript": "/65/8881d42ff1/0/full.jsonl",
+      "context": "/65/8881d42ff1/0/context.md",
+      "content_hash": "/65/8881d42ff1/0/content_hash.txt",
+      "prompt": "/65/8881d42ff1/0/prompt.txt"
+    }
+  ]
+}

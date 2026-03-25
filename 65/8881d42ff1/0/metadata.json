@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "658881d42ff1",
+  "session_id": "9a67b324-d012-40dc-8023-624beba2061e",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-25T14:40:30.782325Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "docker-compose.yml",
+    "docs/Components/存储架构设计/存储架构设计.md",
+    "src/config/settings.py",
+    "src/core/agent/agent.py",
+    "src/core/agent/cli.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/types.py",
+    "src/core/engine/__init__.py",
+    "src/core/engine/engine.py",
+    "src/core/llm/registry.py",
+    "src/core/llm/types.py",
+    "src/main.py",
+    "src/storage/base.py",
+    "src/storage/short_memory_store.py"
+  ],
+  "agent": "Cursor",
+  "turn_id": "f01b7b92a5c8",
+  "initial_attribution": {
+    "calculated_at": "2026-03-25T14:40:30.750873Z",
+    "agent_lines": 872,
+    "human_added": 36,
+    "human_modified": 2,
+    "human_removed": 0,
+    "total_committed": 910,
+    "agent_percentage": 95.82417582417582
+  }
+}
