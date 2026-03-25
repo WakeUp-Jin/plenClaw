@@ -3,7 +3,7 @@
   "checkpoint_id": "658881d42ff1",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 2,
+  "checkpoints_count": 3,
   "files_touched": [
     "docker-compose.yml",
     "docs/Components/存储架构设计/存储架构设计.md",
@@ -28,6 +28,13 @@
       "context": "/65/8881d42ff1/0/context.md",
       "content_hash": "/65/8881d42ff1/0/content_hash.txt",
       "prompt": "/65/8881d42ff1/0/prompt.txt"
+    },
+    {
+      "metadata": "/65/8881d42ff1/1/metadata.json",
+      "transcript": "/65/8881d42ff1/1/full.jsonl",
+      "context": "",
+      "content_hash": "/65/8881d42ff1/1/content_hash.txt",
+      "prompt": ""
     }
   ]
 }
