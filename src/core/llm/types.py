@@ -45,6 +45,7 @@ class LLMResponse:
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: TokenUsage = field(default_factory=TokenUsage)
     finish_reason: str = "stop"
+    thinking: str | None = None
 
     @property
     def has_tool_calls(self) -> bool:

@@ -2,6 +2,10 @@
 
 Provides the core data structures used throughout the context system:
 ContextItem as the internal representation, plus configuration and result types.
+
+Two serialisation formats exist for ContextItem:
+- ``to_message()`` / ``from_message()``: LLM API format (role/content/tool_calls only).
+- ``to_dict()`` / ``from_dict()``: Full persistence format (all metadata + thinking + cost).
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ class ContextItem:
     """Rich data structure for internal context flow.
 
     All context modules store and manipulate ContextItems internally.
-    Use ``to_message()`` to convert to the dict format expected by LLM APIs.
+    Use ``to_message()`` for the LLM API dict, ``to_dict()`` for persistence.
     """
 
     role: str
@@ -39,6 +43,17 @@ class ContextItem:
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None
+
+    # thinking (model reasoning chain, not sent to LLM)
+    thinking: str | None = None
+    thinking_token_estimate: int = 0
+
+    # cost in CNY (calculated from config price per million tokens)
+    cost: float = 0.0
+
+    # ------------------------------------------------------------------
+    # LLM API format (minimal, only fields the model recognises)
+    # ------------------------------------------------------------------
 
     def to_message(self) -> dict[str, Any]:
         """Convert to OpenAI chat message dict format."""
@@ -59,7 +74,13 @@ class ContextItem:
         return msg
 
     @classmethod
-    def from_message(cls, message: dict[str, Any], *, source: str = "", priority: int = MessagePriority.NORMAL) -> ContextItem:
+    def from_message(
+        cls,
+        message: dict[str, Any],
+        *,
+        source: str = "",
+        priority: int = MessagePriority.NORMAL,
+    ) -> ContextItem:
         """Create a ContextItem from an OpenAI chat message dict."""
         return cls(
             role=message.get("role", "user"),
@@ -69,6 +90,47 @@ class ContextItem:
             tool_calls=message.get("tool_calls", []),
             tool_call_id=message.get("tool_call_id"),
             name=message.get("name"),
+        )
+
+    # ------------------------------------------------------------------
+    # Persistence format (full metadata, used by ShortMemoryStore)
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Full serialisation for JSONL persistence."""
+        return {
+            "role": self.role,
+            "content": self.content,
+            "source": self.source,
+            "priority": self.priority,
+            "created_at": self.created_at,
+            "token_estimate": self.token_estimate,
+            "metadata": self.metadata,
+            "tool_calls": self.tool_calls,
+            "tool_call_id": self.tool_call_id,
+            "name": self.name,
+            "thinking": self.thinking,
+            "thinking_token_estimate": self.thinking_token_estimate,
+            "cost": self.cost,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> ContextItem:
+        """Restore from a JSONL line (persistence format)."""
+        return cls(
+            role=d.get("role", "user"),
+            content=d.get("content"),
+            source=d.get("source", ""),
+            priority=d.get("priority", MessagePriority.NORMAL),
+            created_at=d.get("created_at", 0.0),
+            token_estimate=d.get("token_estimate", 0),
+            metadata=d.get("metadata", {}),
+            tool_calls=d.get("tool_calls", []),
+            tool_call_id=d.get("tool_call_id"),
+            name=d.get("name"),
+            thinking=d.get("thinking"),
+            thinking_token_estimate=d.get("thinking_token_estimate", 0),
+            cost=d.get("cost", 0.0),
         )
 
 
@@ -87,12 +149,20 @@ class PromptSegment:
 
 @dataclass
 class CompressionConfig:
-    """Configuration for context compression behaviour."""
+    """Configuration for context compression behaviour.
 
-    max_token_estimate: int = 60000
-    compression_threshold: float = 0.7
-    overflow_threshold: float = 0.95
+    ``context_window`` comes from the active model's config, not hardcoded.
+    Compression triggers when token usage >= context_window * compression_threshold.
+    """
+
+    context_window: int = 128000
+    compression_threshold: float = 0.8
     compress_keep_ratio: float = 0.3
+
+    @property
+    def trigger_tokens(self) -> int:
+        """Token count that triggers compression."""
+        return int(self.context_window * self.compression_threshold)
 
 
 @dataclass

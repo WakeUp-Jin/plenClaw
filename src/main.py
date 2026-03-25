@@ -25,7 +25,7 @@ from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
 from core.agent.agent import Agent
 
-from storage.conversation_store import ConversationStore
+from storage.short_memory_store import ShortMemoryStore
 from storage.memory_store import LocalMemoryStore
 
 from channels.feishu.channel import FeishuChannel
@@ -59,28 +59,30 @@ async def startup() -> None:
     register_feishu_tools(tool_manager, feishu_client)
     logger.info("External tools registered: %d tools", len(tool_manager.list_tools()))
 
-    # 4. Local Memory Store (replaces Feishu-based MemoryStore)
-    memory_store = LocalMemoryStore(base_dir=settings.memory_dir)
+    # 4. Local Memory Store
+    memory_store = LocalMemoryStore(base_dir=str(settings.long_term_dir))
     register_memory_tools(tool_manager, memory_store)
     logger.info("Memory tools registered, total: %d tools", len(tool_manager.list_tools()))
 
     # 5. Context modules
-    conversation_storage = ConversationStore(base_dir=settings.conversations_dir)
+    short_memory_storage = ShortMemoryStore(base_dir=settings.short_term_dir)
     logger.info(
-        "ConversationStore initialized: dir=%s, conversation=%s",
-        settings.conversations_dir,
-        conversation_storage.conversation_file,
+        "ShortMemoryStore initialized: dir=%s, active=%s",
+        settings.short_term_dir,
+        short_memory_storage.active_dir.name,
     )
 
     compressor = ContextCompressor()
-    short_term = ShortTermMemoryContext(storage=conversation_storage, compressor=compressor)
+    short_term = ShortTermMemoryContext(storage=short_memory_storage, compressor=compressor)
     long_term = LongTermMemoryContext(memory_store=memory_store)
     system_prompt = SystemPromptContext()
     tool_context = ToolContext()
 
+    high_model = settings.get_model_config("high")
     compression_config = CompressionConfig(
-        max_token_estimate=settings.chat_max_token_estimate,
-        compress_keep_ratio=settings.chat_compress_keep_ratio,
+        context_window=high_model.context_window,
+        compression_threshold=settings.compression_threshold,
+        compress_keep_ratio=settings.compress_keep_ratio,
     )
 
     context_manager = ContextManager(

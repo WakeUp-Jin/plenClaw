@@ -1,3 +1,3 @@
-from core.engine.engine import ExecutionEngine
+from core.engine.engine import EngineResult, ExecutionEngine
 
-__all__ = ["ExecutionEngine"]
+__all__ = ["EngineResult", "ExecutionEngine"]

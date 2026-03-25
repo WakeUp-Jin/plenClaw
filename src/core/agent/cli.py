@@ -26,7 +26,7 @@ from core.tool.approval import ApprovalStore
 from core.tool.types import ApprovalMode
 from core.agent.agent import Agent
 
-from storage.conversation_store import ConversationStore
+from storage.short_memory_store import ShortMemoryStore
 
 
 def _build_agent() -> Agent:
@@ -36,15 +36,17 @@ def _build_agent() -> Agent:
 
     tool_manager = ToolManager()
 
-    conversation_storage = ConversationStore(base_dir=settings.conversations_dir)
+    short_memory_storage = ShortMemoryStore(base_dir=settings.short_term_dir)
     compressor = ContextCompressor()
-    short_term = ShortTermMemoryContext(storage=conversation_storage, compressor=compressor)
+    short_term = ShortTermMemoryContext(storage=short_memory_storage, compressor=compressor)
     system_prompt = SystemPromptContext()
     tool_context = ToolContext()
 
+    high_model = settings.get_model_config("high")
     compression_config = CompressionConfig(
-        max_token_estimate=settings.chat_max_token_estimate,
-        compress_keep_ratio=settings.chat_compress_keep_ratio,
+        context_window=high_model.context_window,
+        compression_threshold=settings.compression_threshold,
+        compress_keep_ratio=settings.compress_keep_ratio,
     )
 
     context_manager = ContextManager(

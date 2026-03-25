@@ -66,29 +66,29 @@ class IStorage:
 
 
 class IContextStorage(ABC):
-    """Pure I/O contract for persisting conversation messages and compression state.
+    """Pure I/O contract for persisting context items and compression state.
 
-    Implemented by ``ConversationStore``; consumed by ``ShortTermMemoryContext``.
+    Implemented by ``ShortMemoryStore``; consumed by ``ShortTermMemoryContext``.
     """
 
     @abstractmethod
     def append(self, message: dict[str, Any]) -> None:
-        """Append a single message to the backing store."""
+        """Append a single serialised ContextItem dict."""
         ...
 
     @abstractmethod
     def load_all(self) -> list[dict[str, Any]]:
-        """Load every message from the current conversation."""
+        """Load all stored items from the active segment."""
         ...
 
     @abstractmethod
     def load_from_line(self, line_number: int) -> list[dict[str, Any]]:
-        """Load messages starting from *line_number* (0-based)."""
+        """Load items starting from *line_number* (0-based)."""
         ...
 
     @abstractmethod
     def count_lines(self) -> int:
-        """Return the total number of stored messages."""
+        """Return the total number of stored items."""
         ...
 
     @abstractmethod
@@ -98,10 +98,5 @@ class IContextStorage(ABC):
 
     @abstractmethod
     def load_checkpoint(self) -> dict[str, Any] | None:
-        """Load checkpoint or return ``None`` if no checkpoint exists."""
-        ...
-
-    @abstractmethod
-    def new_conversation(self) -> None:
-        """Start a fresh conversation.  Old data should be preserved on disk."""
+        """Load checkpoint or return ``None`` if none exists."""
         ...

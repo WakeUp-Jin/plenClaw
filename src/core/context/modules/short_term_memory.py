@@ -1,30 +1,30 @@
 """Short-term memory context module.
 
-Manages the conversation history and compression.  Replaces the previous
-mixed responsibility in ``ContextManager`` (``_messages`` + ``_summary``).
+Manages the continuous memory stream and compression.  There is no
+"conversation" boundary — memory is a rolling flow of ContextItems
+persisted as time-stamped segments.
 
-Persistence is delegated to an ``IContextStorage`` implementation; compression
-is delegated to ``ContextCompressor``.
+Persistence: ``ShortMemoryStore`` (time-folder + JSONL).
+Compression: ``ContextCompressor`` (LLM-based summarisation).
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+from typing import Callable, Awaitable
 
 from core.context.base import BaseContext
 from core.context.types import ContextItem, CompressionResult, MessagePriority
-from storage.base import IContextStorage
 from core.context.utils.compressor import ContextCompressor
 from core.context.utils.token_estimator import TokenEstimator
 from utils import logger
 
 
 class ShortTermMemoryContext(BaseContext[ContextItem]):
-    """Conversation history with LLM-based compression."""
+    """Continuous memory stream with LLM-based compression."""
 
     def __init__(
         self,
-        storage: IContextStorage,
+        storage,
         compressor: ContextCompressor | None = None,
         token_estimator: TokenEstimator | None = None,
     ) -> None:
@@ -34,7 +34,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         self._estimator = token_estimator or TokenEstimator()
         self._summary: str = ""
 
-        self._load_conversation()
+        self._load_memory()
 
     # ------------------------------------------------------------------
     # Message operations
@@ -43,13 +43,13 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
     def append_message(self, item: ContextItem) -> None:
         """Append to both in-memory list and persistent storage."""
         self.add(item)
-        self._storage.append(item.to_message())
+        self._storage.append(item.to_dict())
 
     # ------------------------------------------------------------------
     # Compression
     # ------------------------------------------------------------------
 
-    def needs_compression(self, max_tokens: int, threshold: float = 0.7) -> bool:
+    def needs_compression(self, max_tokens: int, threshold: float = 0.8) -> bool:
         tokens = self.estimate_tokens()
         return tokens >= int(max_tokens * threshold)
 
@@ -64,7 +64,15 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         summarize_fn: Callable[[str], Awaitable[str]],
         keep_ratio: float = 0.3,
     ) -> CompressionResult:
-        """Run LLM-based compression on the history."""
+        """Compress the older portion of memory via LLM summary.
+
+        Flow:
+        1. Prepend existing summary (if any) to the item list
+        2. LLM summarises the oldest 70%, keeps newest 30%
+        3. Write checkpoint.json to the current segment
+        4. Rotate to a new segment folder for future appends
+        5. Update in-memory state
+        """
         if not self._items:
             return CompressionResult(compressed=False, reason="empty")
 
@@ -78,7 +86,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
             ))
 
         result = await self._compressor.compress_with_llm(
-            items_with_context, keep_ratio, summarize_fn
+            items_with_context, keep_ratio, summarize_fn,
         )
 
         if not result.compressed:
@@ -88,7 +96,14 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         self._storage.save_checkpoint(result.summary, checkpoint_line)
 
         self._summary = result.summary
-        self._items = self._items[-result.kept_count:] if result.kept_count > 0 else []
+        kept_items = self._items[-result.kept_count:] if result.kept_count > 0 else []
+        self._items = kept_items
+
+        if hasattr(self._storage, "rotate"):
+            new_dir = self._storage.rotate()
+            for item in kept_items:
+                self._storage.append(item.to_dict())
+            logger.info("Rotated memory segment -> %s", new_dir.name)
 
         logger.info(
             "ShortTermMemory compressed: %d removed, %d kept, checkpoint at line %d",
@@ -97,15 +112,16 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         return result
 
     # ------------------------------------------------------------------
-    # Conversation management
+    # Clear (archive current segment, start fresh)
     # ------------------------------------------------------------------
 
     def clear(self) -> None:
-        """Start a new conversation, preserving old data on disk."""
+        """Archive current memory and start a fresh segment."""
         super().clear()
         self._summary = ""
-        self._storage.new_conversation()
-        logger.info("Short-term memory cleared, new conversation started")
+        if hasattr(self._storage, "rotate"):
+            self._storage.rotate()
+        logger.info("Short-term memory cleared, new segment started")
 
     # ------------------------------------------------------------------
     # BaseContext interface
@@ -126,29 +142,29 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         return result
 
     # ------------------------------------------------------------------
-    # Internal: conversation loading
+    # Internal: load memory from storage
     # ------------------------------------------------------------------
 
-    def _load_conversation(self) -> None:
+    def _load_memory(self) -> None:
+        """Load the active segment from storage.
+
+        If a checkpoint exists, loads summary + items after the checkpoint line.
+        Otherwise loads everything.  Uses ``ContextItem.from_dict`` so all
+        persisted metadata (thinking, cost, token_estimate, etc.) is restored.
+        """
         checkpoint = self._storage.load_checkpoint()
 
         if checkpoint:
             self._summary = checkpoint.get("summary", "")
-            checkpoint_line = checkpoint.get("checkpoint_line", 0)
-            raw_messages = self._storage.load_from_line(checkpoint_line)
-            self._items = [
-                ContextItem.from_message(m, source="history")
-                for m in raw_messages
-            ]
+            kept_from = checkpoint.get("kept_from_line", checkpoint.get("checkpoint_line", 0))
+            raw = self._storage.load_from_line(kept_from)
+            self._items = [ContextItem.from_dict(d) for d in raw]
             logger.info(
-                "Loaded conversation with checkpoint: summary=%d chars, %d messages from line %d",
-                len(self._summary), len(self._items), checkpoint_line,
+                "Loaded memory with checkpoint: summary=%d chars, %d items from line %d",
+                len(self._summary), len(self._items), kept_from,
             )
         else:
             self._summary = ""
-            raw_messages = self._storage.load_all()
-            self._items = [
-                ContextItem.from_message(m, source="history")
-                for m in raw_messages
-            ]
-            logger.info("Loaded conversation: %d messages (no checkpoint)", len(self._items))
+            raw = self._storage.load_all()
+            self._items = [ContextItem.from_dict(d) for d in raw]
+            logger.info("Loaded memory: %d items (no checkpoint)", len(self._items))

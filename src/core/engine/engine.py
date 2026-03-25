@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
 from core.llm.types import LLMResponse, TokenUsage
@@ -20,6 +21,15 @@ if TYPE_CHECKING:
     from core.tool.scheduler import ToolScheduler
 
 MAX_ITERATIONS = 10
+
+
+@dataclass
+class EngineResult:
+    """Result of a full LLM-Tool execution loop."""
+    text: str = ""
+    usage: TokenUsage = field(default_factory=TokenUsage)
+    intermediate_messages: list[dict[str, Any]] = field(default_factory=list)
+    thinking: str | None = None
 
 
 class ExecutionEngine:
@@ -42,12 +52,8 @@ class ExecutionEngine:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         chat_id: str = "",
-    ) -> tuple[str, TokenUsage, list[dict[str, Any]]]:
-        """执行 LLM-Tool 循环。
-
-        Returns:
-            (final_text, aggregated_usage, intermediate_messages)
-        """
+    ) -> EngineResult:
+        """执行 LLM-Tool 循环。"""
         total_usage = TokenUsage()
         working_messages = list(messages)
         intermediate: list[dict[str, Any]] = []
@@ -59,7 +65,12 @@ class ExecutionEngine:
             total_usage.completion_tokens += response.usage.completion_tokens
 
             if not response.has_tool_calls:
-                return response.content or "", total_usage, intermediate
+                return EngineResult(
+                    text=response.content or "",
+                    usage=total_usage,
+                    intermediate_messages=intermediate,
+                    thinking=response.thinking,
+                )
 
             assistant_msg = self._build_assistant_message(response)
             working_messages.append(assistant_msg)
@@ -76,7 +87,12 @@ class ExecutionEngine:
         final = await llm.complete(working_messages, tools=None)
         total_usage.prompt_tokens += final.usage.prompt_tokens
         total_usage.completion_tokens += final.usage.completion_tokens
-        return final.content or "", total_usage, intermediate
+        return EngineResult(
+            text=final.content or "",
+            usage=total_usage,
+            intermediate_messages=intermediate,
+            thinking=final.thinking,
+        )
 
     # ------------------------------------------------------------------
     # Private helpers

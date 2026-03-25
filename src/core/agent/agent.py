@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from config.settings import settings
 from core.engine import ExecutionEngine
+from core.context.types import ContextItem, MessagePriority
 from core.tool.tools.bash import BashTool
 from core.tool.tools.read_file import ReadFileTool
 from core.tool.tools.list_files import ListFilesTool
@@ -49,35 +51,54 @@ class Agent:
         if user_text.strip() in CLEAR_COMMANDS:
             return self._handle_clear()
 
-        self._ctx.append_message({"role": "user", "content": user_text})
+        model_cfg = settings.get_model_config("high")
+
+        user_item = ContextItem.from_message(
+            {"role": "user", "content": user_text},
+            source="user",
+            priority=MessagePriority.HIGH,
+        )
+        user_item.cost = model_cfg.calc_cost(user_item.token_estimate, direction="input")
+        self._ctx.append_message(user_item.to_message())
 
         messages = self._ctx.get_context()
         tools = self._tool_manager.get_formatted_tools()
         llm = self._registry.get_high()
 
-        response_text, usage, tool_messages = await self._engine.run(
-            llm, messages, tools, chat_id=chat_id,
-        )
+        result = await self._engine.run(llm, messages, tools, chat_id=chat_id)
 
-        self._token_counter.add(usage.prompt_tokens, usage.completion_tokens)
+        self._token_counter.add(result.usage.prompt_tokens, result.usage.completion_tokens)
 
-        for msg in tool_messages:
+        for msg in result.intermediate_messages:
             self._ctx.append_message(msg)
 
         self._ctx.archive_tool_context()
 
-        self._ctx.append_message({"role": "assistant", "content": response_text})
+        assistant_item = ContextItem.from_message(
+            {"role": "assistant", "content": result.text},
+            source="llm",
+            priority=MessagePriority.HIGH,
+        )
+        assistant_item.thinking = result.thinking
+        assistant_item.token_estimate = result.usage.completion_tokens
+        assistant_item.cost = model_cfg.calc_cost(
+            result.usage.completion_tokens, direction="output",
+        )
+        self._ctx.append_message(assistant_item.to_message())
 
         logger.info(
-            "Agent done: tokens=%d (p=%d, c=%d)",
-            usage.total_tokens, usage.prompt_tokens, usage.completion_tokens,
+            "Agent done: tokens=%d (p=%d, c=%d), cost=%.4f CNY",
+            result.usage.total_tokens,
+            result.usage.prompt_tokens,
+            result.usage.completion_tokens,
+            assistant_item.cost,
         )
 
         if self._ctx.needs_compression():
             logger.info("Token threshold exceeded, triggering compression...")
             await self._compress_history()
 
-        return response_text
+        return result.text
 
     # ------------------------------------------------------------------
     # Private

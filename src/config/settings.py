@@ -10,9 +10,121 @@ from typing import Any
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)}")
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DEFAULT_CONFIG_PATH = _PROJECT_ROOT / "config.json"
 _DEFAULT_ENV_PATH = _PROJECT_ROOT / ".env"
 
+
+# ------------------------------------------------------------------
+# .pineclaw home directory
+# ------------------------------------------------------------------
+
+def get_pineclaw_home() -> Path:
+    """Return the .pineclaw directory path.
+
+    Priority: $PINECLAW_HOME env var > ~/.pineclaw
+    """
+    env = os.environ.get("PINECLAW_HOME")
+    if env:
+        return Path(env)
+    return Path.home() / ".pineclaw"
+
+
+_DEFAULT_CONFIG_TEMPLATE: dict[str, Any] = {
+    "app": {
+        "log_level": "INFO",
+    },
+    "models": {
+        "high": {
+            "id": "kimi-k2.5",
+            "name": "Kimi K2.5",
+            "provider": "kimi",
+            "api_key": "${KIMI_API_KEY}",
+            "base_url": "https://api.moonshot.cn/v1",
+            "reasoning": False,
+            "context_window": 131072,
+            "max_tokens": 4096,
+            "temperature": 1.0,
+            "cost": {"input": 2.0, "output": 8.0},
+        },
+        "medium": {
+            "id": "kimi-k2.5",
+            "name": "Kimi K2.5 (medium)",
+            "provider": "kimi",
+            "api_key": "${KIMI_API_KEY}",
+            "base_url": "https://api.moonshot.cn/v1",
+            "reasoning": False,
+            "context_window": 131072,
+            "max_tokens": 4096,
+            "temperature": 0.7,
+            "cost": {"input": 2.0, "output": 8.0},
+        },
+        "low": {
+            "id": "doubao-seed-2.0-lite",
+            "name": "Doubao Seed 2.0 Lite",
+            "provider": "volcengine",
+            "api_key": "${VOLCENGINE_API_KEY}",
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "reasoning": False,
+            "context_window": 32768,
+            "max_tokens": 2048,
+            "temperature": 0.7,
+            "cost": {"input": 0.3, "output": 0.6},
+        },
+    },
+    "memory": {
+        "short_term": {
+            "compression_threshold": 0.8,
+            "compress_keep_ratio": 0.3,
+        },
+    },
+    "retry": {
+        "max_retries": 3,
+        "base_delay": 1.0,
+        "max_delay": 30.0,
+    },
+    "feishu": {
+        "app_id": "${FEISHU_APP_ID}",
+        "app_secret": "${FEISHU_APP_SECRET}",
+        "verification_token": "${FEISHU_VERIFICATION_TOKEN}",
+        "encrypt_key": "${FEISHU_ENCRYPT_KEY}",
+    },
+}
+
+
+def ensure_pineclaw_dirs() -> Path:
+    """Create the ~/.pineclaw directory tree if it does not exist.
+
+    Returns the pineclaw home path.  Safe to call multiple times.
+    """
+    home = get_pineclaw_home()
+
+    dirs = [
+        home,
+        home / "skills",
+        home / "memory",
+        home / "memory" / "short_term",
+        home / "memory" / "long_term",
+    ]
+    for d in dirs:
+        d.mkdir(parents=True, exist_ok=True)
+
+    config_path = home / "config.json"
+    if not config_path.is_file():
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(_DEFAULT_CONFIG_TEMPLATE, f, ensure_ascii=False, indent=2)
+            f.write("\n")
+
+    state_path = home / "memory" / "short_term" / "state.json"
+    if not state_path.is_file():
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump({"active_folder": "", "created_at": ""}, f, indent=2)
+            f.write("\n")
+
+    return home
+
+
+# ------------------------------------------------------------------
+# Env helpers
+# ------------------------------------------------------------------
 
 def _load_dotenv(env_path: Path) -> None:
     """将 .env 文件中的键值对注入到 os.environ（不覆盖已有值）。"""
@@ -45,14 +157,38 @@ def _resolve_env_vars(obj: Any) -> Any:
     return obj
 
 
+# ------------------------------------------------------------------
+# Dataclasses
+# ------------------------------------------------------------------
+
 @dataclass
-class LLMModelConfig:
+class CostConfig:
+    """Price per million tokens in CNY (元/M tokens)."""
+    input: float = 0.0
+    output: float = 0.0
+
+
+@dataclass
+class ModelConfig:
+    """A single LLM model definition."""
+    id: str = ""
+    name: str = ""
     provider: str = ""
-    model: str = ""
     api_key: str = ""
     base_url: str = ""
-    temperature: float = 0.7
+    reasoning: bool = False
+    context_window: int = 128000
     max_tokens: int = 4096
+    temperature: float = 0.7
+    cost: CostConfig = field(default_factory=CostConfig)
+
+    def calc_cost(self, tokens: int, *, direction: str = "input") -> float:
+        """Calculate cost in CNY for a given token count.
+
+        ``direction`` is ``"input"`` or ``"output"``.
+        """
+        price = self.cost.input if direction == "input" else self.cost.output
+        return tokens * price / 1_000_000
 
 
 @dataclass
@@ -63,9 +199,14 @@ class RetryConfig:
 
 
 @dataclass
-class LLMConfig:
-    models: dict[str, LLMModelConfig] = field(default_factory=dict)
-    retry: RetryConfig = field(default_factory=RetryConfig)
+class ShortTermMemoryConfig:
+    compression_threshold: float = 0.8
+    compress_keep_ratio: float = 0.3
+
+
+@dataclass
+class MemoryConfig:
+    short_term: ShortTermMemoryConfig = field(default_factory=ShortTermMemoryConfig)
 
 
 @dataclass
@@ -74,44 +215,28 @@ class FeishuConfig:
     app_secret: str = ""
     verification_token: str = ""
     encrypt_key: str = ""
-    memory_folder_name: str = "PineClaw"
-
-
-@dataclass
-class ChatConfig:
-    conversations_dir: str = "./data/conversations"
-    memory_dir: str = "./data/memory"
-    max_token_estimate: int = 60000
-    compress_keep_ratio: float = 0.3
 
 
 @dataclass
 class AppSection:
     log_level: str = "INFO"
-    sqlite_db_path: str = "./data/pineclaw.db"
 
 
 @dataclass
 class AppConfig:
-    """项目全局配置单例。
-
-    通过 config.json + .env 环境变量加载，提供类型安全的属性访问。
-    """
+    """Global configuration loaded from ~/.pineclaw/config.json + .env."""
 
     app: AppSection = field(default_factory=AppSection)
+    models: dict[str, ModelConfig] = field(default_factory=dict)
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
+    retry: RetryConfig = field(default_factory=RetryConfig)
     feishu: FeishuConfig = field(default_factory=FeishuConfig)
-    llm: LLMConfig = field(default_factory=LLMConfig)
-    chat: ChatConfig = field(default_factory=ChatConfig)
 
-    # ---- 便捷属性（向后兼容旧 settings 用法）----
+    # ---- convenience properties ----
 
     @property
     def log_level(self) -> str:
         return self.app.log_level
-
-    @property
-    def sqlite_db_path(self) -> str:
-        return self.app.sqlite_db_path
 
     @property
     def feishu_app_id(self) -> str:
@@ -130,57 +255,56 @@ class AppConfig:
         return self.feishu.encrypt_key
 
     @property
-    def feishu_memory_folder_name(self) -> str:
-        return self.feishu.memory_folder_name
+    def short_term_dir(self) -> Path:
+        return get_pineclaw_home() / "memory" / "short_term"
 
     @property
-    def conversations_dir(self) -> str:
-        return self.chat.conversations_dir
+    def long_term_dir(self) -> Path:
+        return get_pineclaw_home() / "memory" / "long_term"
 
     @property
-    def memory_dir(self) -> str:
-        return self.chat.memory_dir
+    def compression_threshold(self) -> float:
+        return self.memory.short_term.compression_threshold
 
     @property
-    def chat_max_token_estimate(self) -> int:
-        return self.chat.max_token_estimate
+    def compress_keep_ratio(self) -> float:
+        return self.memory.short_term.compress_keep_ratio
 
-    @property
-    def chat_compress_keep_ratio(self) -> float:
-        return self.chat.compress_keep_ratio
-
-    def get_llm_model_config(self, tier: str) -> LLMModelConfig:
-        """按 ModelTier 名称获取对应的 LLM 模型配置。"""
-        cfg = self.llm.models.get(tier)
+    def get_model_config(self, tier: str) -> ModelConfig:
+        """Get ModelConfig by tier name (high/medium/low)."""
+        cfg = self.models.get(tier)
         if cfg is None:
             raise KeyError(
-                f"LLM model tier '{tier}' not found. "
-                f"Available: {list(self.llm.models.keys())}"
+                f"Model tier '{tier}' not found. "
+                f"Available: {list(self.models.keys())}"
             )
         return cfg
 
 
+# ------------------------------------------------------------------
+# Config builder
+# ------------------------------------------------------------------
+
 def _build_config(raw: dict[str, Any]) -> AppConfig:
-    """从解析后的 dict 构造 AppConfig 实例。"""
+    """Construct AppConfig from a resolved dict."""
     app_raw = raw.get("app", {})
     feishu_raw = raw.get("feishu", {})
-    llm_raw = raw.get("llm", {})
-    chat_raw = raw.get("chat", {})
+    retry_raw = raw.get("retry", {})
+    memory_raw = raw.get("memory", {})
+    st_raw = memory_raw.get("short_term", {})
 
-    models: dict[str, LLMModelConfig] = {}
-    for tier_name, tier_raw in llm_raw.get("models", {}).items():
-        models[tier_name] = LLMModelConfig(**tier_raw)
-
-    retry_raw = llm_raw.get("retry", {})
+    models: dict[str, ModelConfig] = {}
+    for tier_name, tier_raw in raw.get("models", {}).items():
+        cost_raw = tier_raw.pop("cost", {})
+        cost = CostConfig(**cost_raw) if isinstance(cost_raw, dict) else CostConfig()
+        models[tier_name] = ModelConfig(**tier_raw, cost=cost)
 
     return AppConfig(
         app=AppSection(**app_raw),
+        models=models,
+        memory=MemoryConfig(short_term=ShortTermMemoryConfig(**st_raw)),
+        retry=RetryConfig(**retry_raw),
         feishu=FeishuConfig(**feishu_raw),
-        llm=LLMConfig(
-            models=models,
-            retry=RetryConfig(**retry_raw),
-        ),
-        chat=ChatConfig(**chat_raw),
     )
 
 
@@ -188,15 +312,17 @@ def load_config(
     config_path: Path | str | None = None,
     env_path: Path | str | None = None,
 ) -> AppConfig:
-    """加载配置文件并返回 AppConfig 实例。
+    """Load config from ~/.pineclaw/config.json + .env.
 
-    1. 先加载 .env 到环境变量
-    2. 读取 config.json
-    3. 递归替换 ${VAR} 占位符
-    4. 构造 AppConfig dataclass
+    1. Ensure ~/.pineclaw/ directory tree exists (create if missing)
+    2. Load .env into environment
+    3. Read config.json and resolve ${VAR} placeholders
+    4. Build typed AppConfig
     """
+    home = ensure_pineclaw_dirs()
+
     env_path = Path(env_path) if env_path else _DEFAULT_ENV_PATH
-    config_path = Path(config_path) if config_path else _DEFAULT_CONFIG_PATH
+    config_path = Path(config_path) if config_path else (home / "config.json")
 
     _load_dotenv(env_path)
 
@@ -210,5 +336,4 @@ def load_config(
     return _build_config(resolved)
 
 
-# 全局单例 —— import 时即加载
 settings = load_config()
