@@ -1,0 +1,604 @@
+我们一起来计划一下，这个PlenClaw的存储文件夹如何放，里面放写什么，初步断定：文件夹名字是.plenclaw，里面是config.json、skills、memory，这个文件夹下面有短期记忆，有长期记忆，短期记忆就是会话文件夹里面有文件，长期记忆就是md，但是md会引用短期记忆的位置，所以文件结构我们需要讨论一下
+第二个使用的时候，是docker运行的，所以这个文件要如何做，肯定要挂载出来，是放入到项目下面，还是放入用户文件夹下面和.claude一样
+
+第三个就是：短期记忆的问题，需要压缩，当超过模型上下文百分之80的时候就需要压缩，当然这个压缩方法和判断都可以写到短期记忆上下文类中去，或者说判断是写在上下文管理类，出发短期记忆压缩方法，还有这个短期记忆也就是会话文件里面存储什么比较好，我觉得要存储完整的上下文数据结构，而不是message，并且每一个上下文数据结构中要有token等其他的属性，这里也需要讨论一下，并且压缩之后的信息中，要有一条消息或者提示：指向原始的短期记忆文件，因为这样如果压缩丢失的信息过多，模型也可以自己去短期记忆文件中找
+
+第四个就是：短期记忆是要加载进来的，在每一次聊天的时候，都要加载进来，短期记忆不止用户输入，模型输出，还有工具调用的，开始吧，那思考呢？思考的属性值放入到哪里，怎么放也要想一下
+
+---
+
+短期记忆我觉得处理的不好，我需要有一个原则，那就用户的资产可以随时转移，长期记忆是经过短期记忆提取的，那么长期和短期都是用户记忆，我觉得，我一直不同意这个会话概念，因为长期个人助手是没有这个概念的，是一直陪伴，所以要不就叫做short_memory,然后统一在memory下面、短期记忆有遗忘的机制，这个和切换会话一样的
+
+---
+
+1.还有这个config文件，统一放入到一个地方吧，就是用户级配置，记住加载的时候没有就创建查询的时候，创建文件夹，创建文件
+
+模型的配置可以考虑这样，感觉这个定义更加规范，刚好最大maxToken可以从配置文件取：const ollamaModel: Model<'openai-completions'> = { id: 'llama-3.1-8b', name: 'Llama 3.1 8B (Ollama)', api: 'openai-completions', provider: 'ollama', baseUrl: 'localhost...', reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 128000, maxTokens: 32000};
+
+memory可以考虑做从一个Skill的规范不，memory下面是SKILL.md，还有三个文件，short_term放在reference，长期记忆最好也是一个文件夹，可能有多个文件，不同类型的长期记忆，这样方便直接移植用户，可以直接使用到其他的地方，你觉得
+
+还有short_term的文件夹结构，我觉得简单有效一点就可以，下面是文件夹，每一个文件夹都是时间作为文件名，里面是2个文件吧，一个原始的短期记录文件，一个是压缩点检查文件（里面放摘要），因为压缩不会全部压缩，保留后百分之30，压缩前面百分之70，也就是保留最近的百分之30消息，这样加载的就是摘要+最近百分之30的消息，所以你看看吧
+
+---
+
+memory不用放在skill中，正常放在.Pineclaw下面就可以
+
+---
+
+最后加上一条：需求完成之后梳理一个文档放入到docs中的Components中去，第三点：计算一下价格，在上下文数据结构中加一个cost花费字段，单位人民币、配置文件的也是人民币，同时单位是M，也就是2表示，2块钱1M的上下文，压缩的判断使用context_window,配置文件的属性要使用起来
+
+---
+
+继续
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/.pineclaw/config.json" lines="46-49">
+    46|      "cost": {
+    47|        "input": 0.6,
+    48|        "output": 3.6
+    49|      }
+</code_selection>
+
+</attached_files>
+
+/Users/xjk/.pineclaw/memory/short_term/20260325_224052/history.jsonl
+
+看看这个文件，为什么没有消耗的token，当然这个数据结构或许要换一下，增加输入token，换存token，输出token，总token，消耗的钱，包括配置文件里面cost，@config.json (46-49) ，要增加一下缓存的计费，也就是按照M来计费，看看怎么弄吧
+
+---
+
+但是模型定价只有这个：模型
+计费单位
+输入价格
+（缓存命中）
+输入价格
+（缓存未命中）
+输出价格
+模型上下文长度
+kimi-k2.5
+1M tokens	￥0.70	￥4.00	￥21.00	262,144 tokens
+
+输入价格，分为缓存，不缓存，输出，所以请按照这个设计TokenUsage吧
+
+---
+
+估算？为什么要估算，输入是没有这个花费一说的，只有输出才有，输出的时候    "usage": {
+        "prompt_tokens": 19,
+        "completion_tokens": 21,
+        "total_tokens": 40,
+        "cached_tokens": 10  # 缓存命中的 token 数量，只有支持自动缓存的模型会返回该字段
+    }
+
+---
+
+<agent_transcripts>
+Agent transcripts (past chats) live in /Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/agent-transcripts. They have names like <uuid>.jsonl, cite them to the user as [<title for chat <=6 words>](<uuid excluding .jsonl>). NEVER cite subagent transcripts/IDs; you can only cite parent uuids. Don't discuss the folder structure.
+</agent_transcripts>
+
+<agent_skills>
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge. To use a skill, read the skill file at the provided absolute path using the Read tool, then follow the instructions within. When a skill is relevant, read and follow it IMMEDIATELY as your first action. NEVER just announce or mention a skill without actually reading and following it. Only use skills listed below.
+
+<available_skills description="Skills the agent can use. Use the Read tool with the provided absolute path to fetch full contents.">
+<agent_skill fullPath="/Users/xjk/.cursor/skills/find-skills/SKILL.md">Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-agent-patterns/SKILL.md">Agent 形态模块 - 决定如何使用上下文和 LLM 来解决用户问题的执行器设计。
+包含单智能体设计（Agent类/生命周期/工具过滤/AgentConfig/四种预设）、
+多智能体设计（AgentManager/监督者/群体/层级模式/子代理规模控制）、
+执行引擎详解（ExecutionEngine主循环/工具调度/溢出控制/流式输出/中断处理）、
+协同与自主Agent交互形态（场域理论/双向信息流/意图上下文vs状态上下文）。
+当用户需要构建单智能体、设计多智能体协作、实现执行引擎、
+或理解协同Agent与自主Agent的区别时使用此 Skill。
+即使用户没有明确提到"Agent形态"，只要涉及 Agent 类设计、工具循环实现、
+主代理与子代理协作、Agent 预设配置、执行引擎的 while 循环、
+maxLoops 控制、AbortController 中断、或者 Agent 如何调度工具等话题，
+也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-context-management/SKILL.md">Agent 上下文管理模块 - Agent 的核心，负责编排上下文输入给 LLM。
+包含上下文架构（BaseContext基类/ContextManager/消息组装顺序）、
+各上下文类详解（SystemPromptContext/HistoryContext含LLM压缩/CurrentTurnContext）、
+上下文压缩机制（ClaudeCode 9段式/Gemini 5点/工具消息裁剪/消息移除）、
+Token压缩策略（TokenEstimator/三种策略/消息优先级/自适应选择）、
+上下文问题与解决（污染/干扰/冲突/混淆四大问题）、
+消息清理与验证（sanitizeMessages/validateMessages/tool_calls配对）。
+当用户需要设计上下文架构、实现压缩策略、管理Token预算、
+解决上下文问题、或实现消息清理验证时使用此 Skill。
+即使用户没有明确提到"上下文管理"，只要涉及消息序列组装、对话历史压缩、
+token 预算控制、LLM 输入编排、system prompt 设计、conversation history 管理、
+tool_calls 与 tool 响应的配对验证、或者 Agent 对话变长后响应质量下降等问题，
+也应主动使用此 Skill。更长的上下文不等于更好的响应，设计重点不在"获取"而在"整理"。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-evaluation/SKILL.md">Agent 评估模块 - 使提示词设计从"艺术"走向"工程"。
+包含评估方法论（代码评分/人工评分/模型评分/80-20数据集划分/pass@k与pass^k）、
+评估器实现（EventBus事件总线/TestCase结构/评估函数/Agent埋点/格式化输出）、
+不同类型Agent评估（编码Agent/对话Agent/研究Agent/计算机使用Agent的评估维度和策略）。
+当用户需要设计Agent评估方案、实现评估器、建立测试用例、
+或针对特定类型Agent制定评估策略时使用此 Skill。
+即使用户没有明确提到"评估"，只要涉及 Agent 质量度量、prompt 优化效果验证、
+Agent 稳定性测试、pass@k/pass^k 指标计算、AB 测试提示词、
+或者想知道如何科学地迭代改进 Agent 等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-llm-module/SKILL.md">Agent LLM 模块 - 通过统一接口和工厂模式对接多种模型供应商。
+包含 ILLMService 统一接口（complete/simpleChat/generate）、
+工厂模式与服务注册表（createLLMService/LLMServiceRegistry/ModelTier分层缓存）、
+多供应商适配（消息格式转换/工具格式转换/流式输出/重试与退避策略）。
+支持 DeepSeek、OpenRouter、OpenAI、Anthropic 等供应商的差异适配。
+当用户需要设计统一 LLM 接口、实现工厂模式、适配多供应商、
+处理流式输出、实现重试机制时使用此 Skill。
+即使用户没有明确提到"LLM模块"，只要涉及调用大模型 API、封装 OpenAI/Anthropic/DeepSeek 接口、
+处理 chat completions 返回值、实现流式输出、tool_calls 解析、多模型切换、
+或者模型调用失败重试等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-overview/SKILL.md">上下文工程架构总览 - 基于上下文工程构建 Agent 后端的整体设计方法论。
+涵盖四大核心模块（工具管理、上下文管理、LLM模块、Agent形态）的协作关系、
+执行循环、推荐目录结构与渐进式增长路径。
+当用户需要从零开始搭建 Agent 后端、理解 Agent 各模块如何协作、
+选择项目结构、或进行整体架构设计时使用此 Skill。
+即使用户没有明确提到"上下文工程"或"架构总览"，只要涉及 Agent 后端开发、
+AI 应用架构设计、LLM 应用整体规划、搭建 Agent 框架等话题，也应主动使用此 Skill。
+注意：此 Skill 提供全局视角，具体模块的实现细节请参阅对应的专项 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-tool-management/SKILL.md">Agent 工具管理模块 - 覆盖工具的完整生命周期：定义、注册、审核、执行、输出处理。
+包含工具定义规范（InternalTool接口/三层描述/JSON Schema参数）、
+工具注册与发现（ToolManager/动态注册/按Agent过滤）、
+审核设计（ApprovalMode三级模式/Allowlist白名单/确认UI）、
+执行状态机（ToolScheduler/6状态流转/并行判断/deepParseArgs）、
+输出压缩（renderResultForAssistant/ToolOutputSummarizer/截断与LLM摘要）、
+具体工具实现参考（ReadFile/Grep/WriteFile/Task等9种工具）。
+当用户需要为 Agent 定义工具接口、注册管理工具、设计审核机制、
+管理工具执行状态、处理工具输出格式化与压缩、实现具体工具时使用此 Skill。
+即使用户没有明确提到"工具管理"，只要涉及 function calling、tool_calls 处理、
+MCP 工具设计、工具执行安全控制、工具输出太长需要压缩、或者需要实现具体的
+读取/搜索/写入等工具，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/frontend-design/SKILL.md">Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/news-aggregator-skill/SKILL.md">Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 28 sources including Hacker News, GitHub, Hugging Face Papers, AI Newsletters, WallStreetCN, Weibo, and Podcasts. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'deep analysis', or says '如意如意' to open the interactive menu.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/python-patterns/SKILL.md">Pythonic idioms, PEP 8 standards, type hints, and best practices for building robust, efficient, and maintainable Python applications.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/skill-creator/SKILL.md">Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/backend-koa/SKILL.md">Koa 后端开发规范与架构设计。适用场景：(1) 开发 Koa API 接口，(2) 设计后端分层架构（Controller/Service/DoService），(3) 使用 routing-controllers 装饰器，(4) 实现业务逻辑和数据库操作，(5) 配置中间件和错误处理，(6) 部署到阿里云函数计算。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/frontend-react/SKILL.md">React 组件开发规范与最佳实践。适用场景：(1) 编写 React 组件或 Hooks，(2) 实现前端 UI 功能，(3) 管理组件状态（本地/Context/全局），(4) 使用 CSS Modules 编写样式，(5) 处理前端 API 调用，(6) 优化 React 性能，(7) 设置错误边界。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/general-standards/SKILL.md" />
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/iterative-retrieval/SKILL.md">渐进式精炼上下文检索的模式，解决子代理上下文问题</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/module-patterns/SKILL.md">常用业务模块的设计模式与实现规范。适用场景：(1) 实现课程权限控制模块，(2) 开发飞书机器人功能，(3) 实现函数计算异步任务调用，(4) 需要参考成熟的模块设计模式，(5) 设计类似的业务模块架构。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/save-session/SKILL.md">手动保存当前会话总结。适用场景：(1) 会话包含重要决策和尝试，(2) 压缩前需要保存关键信息，(3) 需要为下次会话留下清晰的上下文</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/openai-docs/SKILL.md">Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or explicit GPT-5.4 upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-creator/SKILL.md">Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-installer/SKILL.md">Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos).</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-rule/SKILL.md">Create Cursor rules for persistent AI guidance. Use when you want to create a rule, add coding standards, set up project conventions, configure file-specific patterns, create RULE.md files, or asks about .cursor/rules/ or AGENTS.md.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-skill/SKILL.md">Guides users through creating effective Agent Skills for Cursor. Use when you want to create, write, or author a new skill, or asks about skill structure, best practices, or SKILL.md format.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/update-cursor-settings/SKILL.md">Modify Cursor/VSCode user settings in settings.json. Use when you want to change editor settings, preferences, configuration, themes, font size, tab size, format on save, auto save, keybindings, or any settings.json values.</agent_skill>
+</available_skills>
+</agent_skills>
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/token_%E4%B8%8E_cost_%E4%BF%AE%E5%A4%8D_167660dd.plan.md" lines="1-182">
+     1|---
+     2|name: Token 与 Cost 修复
+     3|overview: 修复 history.jsonl 中 token/cost 全为 0 的问题。cost 只在 assistant 消息上记录（一次 LLM 调用的完整 usage），user 消息 usage 全零。三维定价：input_cached / input / output。
+     4|todos:
+     5|  - id: token-usage-cache
+     6|    content: TokenUsage 增加 cached_tokens 字段
+     7|    status: pending
+     8|  - id: cost-config-3dim
+     9|    content: CostConfig 改为三维 input_cached / input / output；ModelConfig.calc_cost 接收 TokenUsage
+    10|    status: pending
+    11|  - id: item-usage
+    12|    content: "新增 ItemUsage；ContextItem 用 usage: ItemUsage 替换 token_estimate + cost"
+    13|    status: pending
+    14|  - id: ctx-append-item
+    15|    content: ContextManager 新增 append_item(ContextItem)，直接传递不丢元数据
+    16|    status: pending
+    17|  - id: agent-fix
+    18|    content: Agent 改用 append_item，仅 assistant 消息填 usage + cost，user 消息 usage 全零
+    19|    status: pending
+    20|  - id: llm-parse-cache
+    21|    content: 3 个 LLM service 解析 resp.usage.cached_tokens
+    22|    status: pending
+    23|  - id: stm-adapt
+    24|    content: ShortTermMemoryContext.estimate_tokens 适配新 usage 字段
+    25|    status: pending
+    26|  - id: config-json-update
+    27|    content: config.json 和默认模板改为 input_cached / input / output 三维价格
+    28|    status: pending
+    29|isProject: false
+    30|---
+    31|
+    32|# Token 与 Cost 数据链路修复
+    33|
+    34|## 问题根因
+    35|
+    36|`history.jsonl` 中 `token_estimate: 0, cost: 0.0` 全为零：
+    37|
+    38|1. **数据传递断裂**：Agent 构造 `ContextItem` 后调用 `to_message()` 转为精简 dict，ContextManager 又 `from_message()` 重建 —— 所有元数据丢失。
+    39|2. **概念错误**：花费不应该按"单条 user 消息"计算。花费产生在 **LLM 调用** 维度，API 返回 `usage` 是这一次调用的总用量。
+    40|
+    41|## 核心设计原则
+    42|
+    43|- **user 消息**：`usage` 全零，不记录花费（输入没有单独花费一说）
+    44|- **assistant 消息**：挂载这次 LLM 调用的完整 `usage`（prompt_tokens / completion_tokens / cached_tokens / total_tokens）和算出来的 `cost`
+    45|- **不需要 TokenEstimator 估算花费**，直接用 API 返回的真实值
+    46|
+    47|## 定价模型（以 kimi-k2.5 为例）
+    48|
+    49|
+    50|| config 字段      | 含义        | 价格（元/M tokens） |
+    51|| -------------- | --------- | -------------- |
+    52|| `input_cached` | 输入（缓存命中）  | 0.70           |
+    53|| `input`        | 输入（缓存未命中） | 4.00           |
+    54|| `output`       | 输出        | 21.00          |
+    55|
+    56|
+    57|## 改动详情
+    58|
+    59|### 1. TokenUsage 增加 cached_tokens ([src/core/llm/types.py](src/core/llm/types.py))
+    60|
+    61|```python
+    62|@dataclass
+    63|class TokenUsage:
+    64|    prompt_tokens: int = 0
+    65|    completion_tokens: int = 0
+    66|    cached_tokens: int = 0      # 缓存命中的 prompt tokens
+    67|```
+    68|
+    69|### 2. CostConfig 三维定价 ([src/config/settings.py](src/config/settings.py))
+    70|
+    71|```python
+    72|@dataclass
+    73|class CostConfig:
+    74|    input_cached: float = 0.0   # 元/M tokens
+    75|    input: float = 0.0          # 元/M tokens
+    76|    output: float = 0.0         # 元/M tokens
+    77|```
+    78|
+    79|`ModelConfig.calc_cost(usage: TokenUsage)` 计算：
+    80|
+    81|```python
+    82|uncached = usage.prompt_tokens - usage.cached_tokens
+    83|cost = (cached * input_cached + uncached * input + completion * output) / 1_000_000
+    84|```
+    85|
+    86|### 3. ContextItem usage 结构化 ([src/core/context/types.py](src/core/context/types.py))
+    87|
+    88|```python
+    89|@dataclass
+    90|class ItemUsage:
+    91|    prompt_tokens: int = 0      # 这次调用的总输入 tokens
+    92|    completion_tokens: int = 0  # 输出 tokens
+    93|    cached_tokens: int = 0      # 缓存命中的输入 tokens
+    94|    total_tokens: int = 0       # prompt + completion
+    95|    cost: float = 0.0           # 人民币元
+    96|```
+    97|
+    98|ContextItem：移除 `token_estimate` + `cost`，新增 `usage: ItemUsage`。
+    99|
+   100|- user 消息：`usage` 全零
+   101|- assistant 消息：从 `EngineResult.usage` 填入真实值 + `calc_cost()` 算出 cost
+   102|
+   103|### 4. append_item() 链路修复 ([src/core/context/manager.py](src/core/context/manager.py) + [src/core/agent/agent.py](src/core/agent/agent.py))
+   104|
+   105|ContextManager 新增 `append_item(ContextItem)` 直接路由，不经 `to_message()` / `from_message()` 转换。
+   106|
+   107|Agent 改为：
+   108|
+   109|```python
+   110|# user 消息 — usage 全零
+   111|user_item = ContextItem(role="user", content=text, source="user")
+   112|self._ctx.append_item(user_item)
+   113|
+   114|# assistant 消息 — 填 API 真实 usage
+   115|assistant_item = ContextItem(role="assistant", content=result.text, source="llm")
+   116|assistant_item.usage = ItemUsage(
+   117|    prompt_tokens=result.usage.prompt_tokens,
+   118|    completion_tokens=result.usage.completion_tokens,
+   119|    cached_tokens=result.usage.cached_tokens,
+   120|    total_tokens=result.usage.total_tokens,
+   121|    cost=model_cfg.calc_cost(result.usage),
+   122|)
+   123|self._ctx.append_item(assistant_item)
+   124|```
+   125|
+   126|### 5. LLM 服务解析 cached_tokens (3 个 service 文件)
+   127|
+   128|```python
+   129|cached = 0
+   130|if resp.usage and hasattr(resp.usage, "prompt_tokens_details"):
+   131|    details = resp.usage.prompt_tokens_details
+   132|    if details:
+   133|        cached = getattr(details, "cached_tokens", 0) or 0
+   134|usage = TokenUsage(prompt_tokens=..., completion_tokens=..., cached_tokens=cached)
+   135|```
+   136|
+   137|## 数据流图
+   138|
+   139|```mermaid
+   140|flowchart TD
+   141|    subgraph agent [Agent.run]
+   142|        A1["user_item: usage=全零"] --> A2["ctx.append_item(user_item)"]
+   143|        A2 --> A3["Engine.run() -> EngineResult"]
+   144|        A3 --> A4["assistant_item.usage = API 真实值"]
+   145|        A4 --> A5["calc_cost(result.usage) 算花费"]
+   146|        A5 --> A6["ctx.append_item(assistant_item)"]
+   147|    end
+   148|
+   149|    subgraph ctxMgr [ContextManager]
+   150|        B1["append_item(item)"] --> B2{"has tool_calls?"}
+   151|        B2 -->|Yes| B3["tool_context.add(item)"]
+   152|        B2 -->|No| B4["short_term.append_message(item)"]
+   153|        B4 --> B5["storage.append(item.to_dict())"]
+   154|    end
+   155|
+   156|    A2 --> B1
+   157|    A6 --> B1
+   158|```
+   159|
+   160|
+   161|
+   162|## history.jsonl 改造后示例
+   163|
+   164|```jsonl
+   165|{"role":"user","content":"你好","source":"user","usage":{"prompt_tokens":0,"completion_tokens":0,"cached_tokens":0,"total_tokens":0,"cost":0},...}
+   166|{"role":"assistant","content":"你好！","source":"llm","usage":{"prompt_tokens":1200,"completion_tokens":120,"cached_tokens":800,"total_tokens":1320,"cost":0.00412},...}
+   167|```
+   168|
+   169|## 影响文件清单
+   170|
+   171|- [src/core/llm/types.py](src/core/llm/types.py) -- `TokenUsage` 增加 `cached_tokens`
+   172|- [src/config/settings.py](src/config/settings.py) -- `CostConfig` 三维，`calc_cost` 接收 `TokenUsage`
+   173|- [src/core/context/types.py](src/core/context/types.py) -- 新增 `ItemUsage`，`ContextItem` 用 `usage` 替换 `token_estimate` + `cost`
+   174|- [src/core/agent/agent.py](src/core/agent/agent.py) -- 用 `append_item`，仅 assistant 填 usage
+   175|- [src/core/context/manager.py](src/core/context/manager.py) -- 新增 `append_item(ContextItem)`
+   176|- [src/core/llm/services/kimi_service.py](src/core/llm/services/kimi_service.py) -- 解析 cached_tokens
+   177|- [src/core/llm/services/openai_service.py](src/core/llm/services/openai_service.py) -- 解析 cached_tokens
+   178|- [src/core/llm/services/volcengine_service.py](src/core/llm/services/volcengine_service.py) -- 解析 cached_tokens
+   179|- [src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py) -- `estimate_tokens` 适配
+   180|- [~/.pineclaw/config.json](~/.pineclaw/config.json) + settings.py 默认模板 -- 三维价格
+   181|
+   182|
+</code_selection>
+
+</attached_files>
+
+Token 与 Cost 数据链路修复
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+继续
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/.pineclaw/config.json" lines="46-49">
+    46|      "cost": {
+    47|        "input": 0.6,
+    48|        "output": 3.6
+    49|      }
+</code_selection>
+
+</attached_files>
+
+/Users/xjk/.pineclaw/memory/short_term/20260325_224052/history.jsonl
+
+看看这个文件，为什么没有消耗的token，当然这个数据结构或许要换一下，增加输入token，换存token，输出token，总token，消耗的钱，包括配置文件里面cost，@config.json (46-49) ，要增加一下缓存的计费，也就是按照M来计费，看看怎么弄吧
+
+---
+
+但是模型定价只有这个：模型
+计费单位
+输入价格
+（缓存命中）
+输入价格
+（缓存未命中）
+输出价格
+模型上下文长度
+kimi-k2.5
+1M tokens	￥0.70	￥4.00	￥21.00	262,144 tokens
+
+输入价格，分为缓存，不缓存，输出，所以请按照这个设计TokenUsage吧
+
+---
+
+估算？为什么要估算，输入是没有这个花费一说的，只有输出才有，输出的时候    "usage": {
+        "prompt_tokens": 19,
+        "completion_tokens": 21,
+        "total_tokens": 40,
+        "cached_tokens": 10  # 缓存命中的 token 数量，只有支持自动缓存的模型会返回该字段
+    }
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/.cursor/plans/token_与_cost_修复_167660dd.plan.md" lines="1-151">
+     1|# Token 与 Cost 数据链路修复
+     2|
+     3|## 问题根因
+     4|
+     5|`history.jsonl` 中 `token_estimate: 0, cost: 0.0` 全为零：
+     6|
+     7|1. **数据传递断裂**：Agent 构造 `ContextItem` 后调用 `to_message()` 转为精简 dict，ContextManager 又 `from_message()` 重建 —— 所有元数据丢失。
+     8|2. **概念错误**：花费不应该按"单条 user 消息"计算。花费产生在 **LLM 调用** 维度，API 返回 `usage` 是这一次调用的总用量。
+     9|
+    10|## 核心设计原则
+    11|
+    12|- **user 消息**：`usage` 全零，不记录花费（输入没有单独花费一说）
+    13|- **assistant 消息**：挂载这次 LLM 调用的完整 `usage`（prompt_tokens / completion_tokens / cached_tokens / total_tokens）和算出来的 `cost`
+    14|- **不需要 TokenEstimator 估算花费**，直接用 API 返回的真实值
+    15|
+    16|## 定价模型（以 kimi-k2.5 为例）
+    17|
+    18|
+    19|| config 字段      | 含义        | 价格（元/M tokens） |
+    20|| -------------- | --------- | -------------- |
+    21|| `input_cached` | 输入（缓存命中）  | 0.70           |
+    22|| `input`        | 输入（缓存未命中） | 4.00           |
+    23|| `output`       | 输出        | 21.00          |
+    24|
+    25|
+    26|## 改动详情
+    27|
+    28|### 1. TokenUsage 增加 cached_tokens ([src/core/llm/types.py](src/core/llm/types.py))
+    29|
+    30|```python
+    31|@dataclass
+    32|class TokenUsage:
+    33|    prompt_tokens: int = 0
+    34|    completion_tokens: int = 0
+    35|    cached_tokens: int = 0      # 缓存命中的 prompt tokens
+    36|```
+    37|
+    38|### 2. CostConfig 三维定价 ([src/config/settings.py](src/config/settings.py))
+    39|
+    40|```python
+    41|@dataclass
+    42|class CostConfig:
+    43|    input_cached: float = 0.0   # 元/M tokens
+    44|    input: float = 0.0          # 元/M tokens
+    45|    output: float = 0.0         # 元/M tokens
+    46|```
+    47|
+    48|`ModelConfig.calc_cost(usage: TokenUsage)` 计算：
+    49|
+    50|```python
+    51|uncached = usage.prompt_tokens - usage.cached_tokens
+    52|cost = (cached * input_cached + uncached * input + completion * output) / 1_000_000
+    53|```
+    54|
+    55|### 3. ContextItem usage 结构化 ([src/core/context/types.py](src/core/context/types.py))
+    56|
+    57|```python
+    58|@dataclass
+    59|class ItemUsage:
+    60|    prompt_tokens: int = 0      # 这次调用的总输入 tokens
+    61|    completion_tokens: int = 0  # 输出 tokens
+    62|    cached_tokens: int = 0      # 缓存命中的输入 tokens
+    63|    total_tokens: int = 0       # prompt + completion
+    64|    cost: float = 0.0           # 人民币元
+    65|```
+    66|
+    67|ContextItem：移除 `token_estimate` + `cost`，新增 `usage: ItemUsage`。
+    68|
+    69|- user 消息：`usage` 全零
+    70|- assistant 消息：从 `EngineResult.usage` 填入真实值 + `calc_cost()` 算出 cost
+    71|
+    72|### 4. append_item() 链路修复 ([src/core/context/manager.py](src/core/context/manager.py) + [src/core/agent/agent.py](src/core/agent/agent.py))
+    73|
+    74|ContextManager 新增 `append_item(ContextItem)` 直接路由，不经 `to_message()` / `from_message()` 转换。
+    75|
+    76|Agent 改为：
+    77|
+    78|```python
+    79|# user 消息 — usage 全零
+    80|user_item = ContextItem(role="user", content=text, source="user")
+    81|self._ctx.append_item(user_item)
+    82|
+    83|# assistant 消息 — 填 API 真实 usage
+    84|assistant_item = ContextItem(role="assistant", content=result.text, source="llm")
+    85|assistant_item.usage = ItemUsage(
+    86|    prompt_tokens=result.usage.prompt_tokens,
+    87|    completion_tokens=result.usage.completion_tokens,
+    88|    cached_tokens=result.usage.cached_tokens,
+    89|    total_tokens=result.usage.total_tokens,
+    90|    cost=model_cfg.calc_cost(result.usage),
+    91|)
+    92|self._ctx.append_item(assistant_item)
+    93|```
+    94|
+    95|### 5. LLM 服务解析 cached_tokens (3 个 service 文件)
+    96|
+    97|```python
+    98|cached = 0
+    99|if resp.usage and hasattr(resp.usage, "prompt_tokens_details"):
+   100|    details = resp.usage.prompt_tokens_details
+   101|    if details:
+   102|        cached = getattr(details, "cached_tokens", 0) or 0
+   103|usage = TokenUsage(prompt_tokens=..., completion_tokens=..., cached_tokens=cached)
+   104|```
+   105|
+   106|## 数据流图
+   107|
+   108|```mermaid
+   109|flowchart TD
+   110|    subgraph agent [Agent.run]
+   111|        A1["user_item: usage=全零"] --> A2["ctx.append_item(user_item)"]
+   112|        A2 --> A3["Engine.run() -> EngineResult"]
+   113|        A3 --> A4["assistant_item.usage = API 真实值"]
+   114|        A4 --> A5["calc_cost(result.usage) 算花费"]
+   115|        A5 --> A6["ctx.append_item(assistant_item)"]
+   116|    end
+   117|
+   118|    subgraph ctxMgr [ContextManager]
+   119|        B1["append_item(item)"] --> B2{"has tool_calls?"}
+   120|        B2 -->|Yes| B3["tool_context.add(item)"]
+   121|        B2 -->|No| B4["short_term.append_message(item)"]
+   122|        B4 --> B5["storage.append(item.to_dict())"]
+   123|    end
+   124|
+   125|    A2 --> B1
+   126|    A6 --> B1
+   127|```
+   128|
+   129|
+   130|
+   131|## history.jsonl 改造后示例
+   132|
+   133|```jsonl
+   134|{"role":"user","content":"你好","source":"user","usage":{"prompt_tokens":0,"completion_tokens":0,"cached_tokens":0,"total_tokens":0,"cost":0},...}
+   135|{"role":"assistant","content":"你好！","source":"llm","usage":{"prompt_tokens":1200,"completion_tokens":120,"cached_tokens":800,"total_tokens":1320,"cost":0.00412},...}
+   136|```
+   137|
+   138|## 影响文件清单
+   139|
+   140|- [src/core/llm/types.py](src/core/llm/types.py) -- `TokenUsage` 增加 `cached_tokens`
+   141|- [src/config/settings.py](src/config/settings.py) -- `CostConfig` 三维，`calc_cost` 接收 `TokenUsage`
+   142|- [src/core/context/types.py](src/core/context/types.py) -- 新增 `ItemUsage`，`ContextItem` 用 `usage` 替换 `token_estimate` + `cost`
+   143|- [src/core/agent/agent.py](src/core/agent/agent.py) -- 用 `append_item`，仅 assistant 填 usage
+   144|- [src/core/context/manager.py](src/core/context/manager.py) -- 新增 `append_item(ContextItem)`
+   145|- [src/core/llm/services/kimi_service.py](src/core/llm/services/kimi_service.py) -- 解析 cached_tokens
+   146|- [src/core/llm/services/openai_service.py](src/core/llm/services/openai_service.py) -- 解析 cached_tokens
+   147|- [src/core/llm/services/volcengine_service.py](src/core/llm/services/volcengine_service.py) -- 解析 cached_tokens
+   148|- [src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py) -- `estimate_tokens` 适配
+   149|- [~/.pineclaw/config.json](~/.pineclaw/config.json) + settings.py 默认模板 -- 三维价格
+   150|
+   151|
+</code_selection>
+
+</attached_files>
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+append_item() 直接传递完整 ContextItem，不经过 to_message() → from_message() 的有损转换
+
+这个是什么意思？
+
+---
+
+嗯嗯是的，我也觉得，在最后传入给LLM的时候转换一下就可以，至于输出还是内部流转，其实使用的都是自己定义这个有状态的上下文工程的数据结构

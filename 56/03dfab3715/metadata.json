@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "5603dfab3715",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "src/config/settings.py",
+    "src/core/agent/agent.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/types.py",
+    "src/core/llm/services/kimi_service.py",
+    "src/core/llm/services/openai_service.py",
+    "src/core/llm/services/volcengine_service.py",
+    "src/core/llm/types.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/56/03dfab3715/0/metadata.json",
+      "transcript": "/56/03dfab3715/0/full.jsonl",
+      "context": "/56/03dfab3715/0/context.md",
+      "content_hash": "/56/03dfab3715/0/content_hash.txt",
+      "prompt": "/56/03dfab3715/0/prompt.txt"
+    }
+  ]
+}
