@@ -68,20 +68,20 @@ class LLMServiceRegistry:
 
     def _build_llm_config(self, tier: ModelTier) -> LLMConfig:
         """从 AppConfig 构造 LLMConfig。"""
-        model_cfg = self._config.get_llm_model_config(tier.value)
+        model_cfg = self._config.get_model_config(tier.value)
         return LLMConfig(
             provider=model_cfg.provider,
             api_key=model_cfg.api_key,
             base_url=model_cfg.base_url,
-            model=model_cfg.model,
+            model=model_cfg.id,
             temperature=model_cfg.temperature,
             max_tokens=model_cfg.max_tokens,
-            max_retries=self._config.llm.retry.max_retries,
+            max_retries=self._config.retry.max_retries,
         )
 
     def _compute_config_hash(self, tier: ModelTier) -> str:
-        model_cfg = self._config.get_llm_model_config(tier.value)
+        model_cfg = self._config.get_model_config(tier.value)
         return json.dumps(
-            {"provider": model_cfg.provider, "model": model_cfg.model},
+            {"provider": model_cfg.provider, "model": model_cfg.id},
             sort_keys=True,
         )

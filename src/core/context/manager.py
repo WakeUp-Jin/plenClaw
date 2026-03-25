@@ -78,7 +78,7 @@ class ContextManager:
 
     def needs_compression(self) -> bool:
         return self._short_term.needs_compression(
-            self._config.max_token_estimate,
+            self._config.context_window,
             self._config.compression_threshold,
         )
 
