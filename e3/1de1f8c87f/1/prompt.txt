@@ -1,0 +1,303 @@
+这两个上下文有点模糊不清楚：/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context/modules/tool_context.py/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context/modules/short_term_memory.py
+
+我们一起讨论一下看看，其实工具的输出也是短记忆里面的一环我觉得，我们将会话历史记录取消之后，其实就没有了会话的概念，工具其实也是短期记忆里面的一种，你觉得呢？短期记忆里面分为用户输入，工具调用，模型回复，这种类型，你觉得这个怎么样，这样上下文就精简可读啦，并且写入操作就很清晰啦，数据流动也可以，不过方案没有百分比完美的，你可以看看这样的缺点是什么
+
+---
+
+我们在聊一下，合并的其实还有一个原因就是：用户一次输入，模型可能会多轮执行，那么这个里面就是写入操作的时候，目前是多轮执行结束之后才写入，而不是模型输出一轮就写入，这样我担心会导致执行到一半就断掉之后，那么这里的几条消息就会丢失，
+
+但是这样我想起了一个问题就是：当写入一半之后，丢失，那么再次加载历史记录的时候，最近的一条消息是tool角色的，这样好像message里面会报出错误是吗？
+
+---
+
+嗯嗯好的，开始考虑重构吧计划吧
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/%E5%90%88%E5%B9%B6toolcontext%E5%88%B0shorttermmemory_2df922fc.plan.md" lines="1-269">
+     1|---
+     2|name: 合并ToolContext到ShortTermMemory
+     3|overview: 将 ToolContext 合并进 ShortTermMemory，实现统一的消息写入入口和即时落盘，同时在加载历史时自动 sanitize 不完整的工具链，解决崩溃丢消息和 API 报错问题。
+     4|todos:
+     5|  - id: step1-stm
+     6|    content: 改 ShortTermMemoryContext：增加 turn marker、sanitize on load、压缩边界保护
+     7|    status: pending
+     8|  - id: step2-manager
+     9|    content: 改 ContextManager：移除 ToolContext 依赖，统一写入 short_term，移除 archive 方法
+    10|    status: pending
+    11|  - id: step3-engine
+    12|    content: 改 ExecutionEngine：增加 on_message 回调参数，每轮即时写出中间消息
+    13|    status: pending
+    14|  - id: step4-agent
+    15|    content: 改 Agent：传入 on_message 回调，移除批量写入和 archive 逻辑
+    16|    status: pending
+    17|  - id: step5-entry
+    18|    content: 改 main.py 和 cli.py：移除 ToolContext 创建和传参
+    19|    status: pending
+    20|  - id: step6-delete
+    21|    content: 删除 tool_context.py 文件
+    22|    status: pending
+    23|isProject: false
+    24|---
+    25|
+    26|# 合并 ToolContext 到 ShortTermMemory 重构方案
+    27|
+    28|## 核心思路
+    29|
+    30|删除独立的 `ToolContext` 模块，将所有消息（用户输入、工具调用、模型回复）统一由 `ShortTermMemoryContext` 管理。每条消息写入时**即时落盘**，加载时自动**清理不完整工具链**。
+    31|
+    32|## 改动概览
+    33|
+    34|```mermaid
+    35|flowchart LR
+    36|    subgraph before [当前: 两个模块 + 延迟写入]
+    37|        E1[Engine 执行多轮] -->|攒在内存| Agent1[Agent]
+    38|        Agent1 -->|批量写入| TC[ToolContext]
+    39|        TC -->|archive_to| STM1[ShortTermMemory 磁盘]
+    40|    end
+    41|
+    42|    subgraph after [重构后: 统一模块 + 即时写入]
+    43|        E2[Engine 每轮产出] -->|回调写入| STM2[ShortTermMemory 磁盘]
+    44|    end
+    45|```
+    46|
+    47|
+    48|
+    49|## 涉及文件（6 个改 + 1 个删）
+    50|
+    51|
+    52|| 文件                                              | 操作    | 说明                                      |
+    53|| ----------------------------------------------- | ----- | --------------------------------------- |
+    54|| `src/core/context/modules/short_term_memory.py` | **改** | 新增 turn marker + sanitize on load       |
+    55|| `src/core/context/modules/tool_context.py`      | **删** | 整个文件移除                                  |
+    56|| `src/core/context/manager.py`                   | **改** | 移除 ToolContext 依赖，简化 append/get_context |
+    57|| `src/core/engine/engine.py`                     | **改** | 引入回调，每轮即时写出中间消息                         |
+    58|| `src/core/agent/agent.py`                       | **改** | 适配新 Engine 回调，移除 archive 逻辑             |
+    59|| `src/main.py`                                   | **改** | 移除 ToolContext 创建和传参                    |
+    60|| `src/core/agent/cli.py`                         | **改** | 同上，移除 ToolContext                       |
+    61|
+    62|
+    63|---
+    64|
+    65|## 第一步：改 ShortTermMemoryContext — 增加 turn 管理和加载时 sanitize
+    66|
+    67|在 [short_term_memory.py](src/core/context/modules/short_term_memory.py) 中：
+    68|
+    69|**1a) 增加 turn 标记**
+    70|
+    71|```python
+    72|def mark_turn_start(self) -> None:
+    73|    """记录当前轮次的起始位置（items 列表的长度）。"""
+    74|    self._turn_start = len(self._items)
+    75|
+    76|def get_current_turn_items(self) -> list[ContextItem]:
+    77|    """获取当前轮次的所有消息。"""
+    78|    return list(self._items[self._turn_start:])
+    79|```
+    80|
+    81|这样可以区分"本轮新增"和"历史"，后续如果需要只对当前轮做操作会很方便。
+    82|
+    83|**1b) 加载时 sanitize**
+    84|
+    85|在 `_load_memory()` 末尾，加载完所有 items 后，调用 `sanitize_messages` 清理不完整的工具链：
+    86|
+    87|```python
+    88|def _load_memory(self) -> None:
+    89|    # ...现有加载逻辑...
+    90|    
+    91|    # 加载后清理不完整的工具链（防止上次崩溃导致的残留）
+    92|    self._sanitize_on_load()
+    93|
+    94|def _sanitize_on_load(self) -> None:
+    95|    """清理加载的历史消息中不完整的工具调用链。"""
+    96|    messages = [item.to_message() for item in self._items]
+    97|    cleaned = sanitize_messages(messages)
+    98|    if len(cleaned) < len(messages):
+    99|        # 有消息被清理，需要重建 items 列表
+   100|        # 通过内容比对找出保留的 items
+   101|        ...rebuild logic...
+   102|        logger.warning(
+   103|            "Sanitized %d incomplete tool messages on load",
+   104|            len(messages) - len(cleaned),
+   105|        )
+   106|```
+   107|
+   108|**1c) 压缩前不再需要等 archive**
+   109|
+   110|当前压缩前要先 `archive_tool_context()`，合并后不再需要，因为工具消息已经在 ShortTermMemory 里了。但需确保不压缩正在进行的不完整工具链 — 利用 `_turn_start` 标记，只压缩 turn 之前的消息。
+   111|
+   112|---
+   113|
+   114|## 第二步：改 ContextManager — 移除 ToolContext 依赖
+   115|
+   116|在 [manager.py](src/core/context/manager.py) 中：
+   117|
+   118|**2a) 构造函数移除 tool_context 参数**
+   119|
+   120|```python
+   121|def __init__(
+   122|    self,
+   123|    system_prompt: SystemPromptContext,
+   124|    short_term_memory: ShortTermMemoryContext,
+   125|    long_term_memory: LongTermMemoryContext | None = None,
+   126|    compression_config: CompressionConfig | None = None,
+   127|) -> None:
+   128|```
+   129|
+   130|**2b) append_item 简化 — 全部写入 short_term**
+   131|
+   132|当前 `append_item()` 根据消息类型分发到 ToolContext 或 ShortTermMemory。合并后统一写入 ShortTermMemory：
+   133|
+   134|```python
+   135|def append_item(self, item: ContextItem) -> None:
+   136|    if item.tool_calls:
+   137|        item.source = item.source or "tool"
+   138|        item.priority = MessagePriority.HIGH
+   139|    elif item.role == "tool":
+   140|        item.source = item.source or "tool"
+   141|        item.priority = MessagePriority.HIGH
+   142|    self._short_term.append_message(item)
+   143|```
+   144|
+   145|**2c) 移除 archive_tool_context() 和 tool_context 属性**
+   146|
+   147|**2d) _build_context_items 简化**
+   148|
+   149|```python
+   150|def _build_context_items(self) -> list[ContextItem]:
+   151|    items: list[ContextItem] = []
+   152|    items.extend(self._system_prompt.format())
+   153|    if self._long_term is not None:
+   154|        items.extend(self._long_term.format())
+   155|    items.extend(self._short_term.format())
+   156|    return items
+   157|```
+   158|
+   159|---
+   160|
+   161|## 第三步：改 ExecutionEngine — 引入回调即时写出
+   162|
+   163|在 [engine.py](src/core/engine/engine.py) 中：
+   164|
+   165|**核心改动**：`run()` 方法接受一个 `on_message` 回调参数。每产生一条中间消息，立刻通过回调写出，而不是攒到最后返回。
+   166|
+   167|```python
+   168|async def run(
+   169|    self,
+   170|    llm: BaseLLMService,
+   171|    messages: list[dict[str, Any]],
+   172|    tools: list[dict[str, Any]],
+   173|    chat_id: str = "",
+   174|    on_message: Callable[[dict[str, Any]], None] | None = None,
+   175|) -> EngineResult:
+   176|```
+   177|
+   178|循环内部，每次产生 assistant_msg 和 tool_msgs 时：
+   179|
+   180|```python
+   181|# 产生 assistant 消息（带 tool_calls）
+   182|assistant_msg = self._build_assistant_message(response)
+   183|working_messages.append(assistant_msg)
+   184|if on_message:
+   185|    on_message(assistant_msg)
+   186|
+   187|# 执行工具，产生 tool 响应
+   188|tool_msgs = await self._execute_tools(response, chat_id)
+   189|working_messages.extend(tool_msgs)
+   190|for tm in tool_msgs:
+   191|    if on_message:
+   192|        on_message(tm)
+   193|```
+   194|
+   195|`EngineResult` 中的 `intermediate_messages` 字段保留（向后兼容），但如果传了 `on_message`，消息已经即时写出了，Agent 不需要再回溯处理。
+   196|
+   197|---
+   198|
+   199|## 第四步：改 Agent — 适配新流程
+   200|
+   201|在 [agent.py](src/core/agent/agent.py) 中：
+   202|
+   203|**4a) 在调用 engine.run 前标记 turn 起始**
+   204|
+   205|```python
+   206|self._ctx.short_term_memory.mark_turn_start()
+   207|```
+   208|
+   209|**4b) 传入回调**
+   210|
+   211|```python
+   212|result = await self._engine.run(
+   213|    llm, messages, tools,
+   214|    chat_id=chat_id,
+   215|    on_message=lambda msg: self._ctx.append_message(msg),
+   216|)
+   217|```
+   218|
+   219|**4c) 移除旧的批量写入 + archive 逻辑**
+   220|
+   221|删除：
+   222|
+   223|```python
+   224|for msg in result.intermediate_messages:
+   225|    self._ctx.append_message(msg)
+   226|self._ctx.archive_tool_context()
+   227|```
+   228|
+   229|只保留最终 assistant 回复的写入。
+   230|
+   231|---
+   232|
+   233|## 第五步：改 main.py 和 cli.py — 移除 ToolContext
+   234|
+   235|两个文件中删除：
+   236|
+   237|- `from core.context.modules.tool_context import ToolContext`
+   238|- `tool_context = ToolContext()`
+   239|- ContextManager 构造参数中的 `tool_context=tool_context`
+   240|
+   241|---
+   242|
+   243|## 第六步：删除 tool_context.py
+   244|
+   245|确认没有其他引用后，删除 [tool_context.py](src/core/context/modules/tool_context.py)。
+   246|
+   247|---
+   248|
+   249|## 数据流对比
+   250|
+   251|**重构前**：
+   252|
+   253|```
+   254|用户输入 → STM(磁盘) → Engine 多轮执行(内存) → 全部结束 → 批量写入 ToolContext → archive 到 STM(磁盘) → 最终回复 → STM(磁盘)
+   255|```
+   256|
+   257|**重构后**：
+   258|
+   259|```
+   260|用户输入 → STM(磁盘) → Engine 每轮执行 → 回调即时写入 STM(磁盘) → ... → 最终回复 → STM(磁盘)
+   261|```
+   262|
+   263|## 风险和注意事项
+   264|
+   265|- **sanitize_on_load 的重建逻辑**：需要从 cleaned messages 反推哪些 ContextItems 要保留。可复用现有 `ToolContext.sanitize()` 中的匹配逻辑（按内容比对）
+   266|- **压缩边界**：`compress()` 时需确保不压缩 `_turn_start` 之后的消息（当前轮可能还在进行中）
+   267|- **on_message 回调的线程安全**：当前是单线程 async，不需要额外考虑，但如果将来并发调用需注意
+   268|
+   269|
+</code_selection>
+
+</attached_files>
+
+合并 ToolContext 到 ShortTermMemory 重构方案
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+EngineResult 中的 intermediate_messages 字段保留（向后兼容）
+
+不需要向后兼容，多余没有使用的代码想要清理掉，保持代码库干净整洁，可读性强

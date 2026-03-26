@@ -3,11 +3,17 @@
   "checkpoint_id": "e31de1f8c87f",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 1,
+  "checkpoints_count": 5,
   "files_touched": [
+    "src/core/agent/agent.py",
+    "src/core/agent/cli.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/modules/tool_context.py",
     "src/core/context/types.py",
     "src/core/engine/engine.py",
-    "src/core/llm/services/kimi_service.py"
+    "src/core/llm/services/kimi_service.py",
+    "src/main.py"
   ],
   "sessions": [
     {
@@ -16,6 +22,13 @@
       "context": "/e3/1de1f8c87f/0/context.md",
       "content_hash": "/e3/1de1f8c87f/0/content_hash.txt",
       "prompt": "/e3/1de1f8c87f/0/prompt.txt"
+    },
+    {
+      "metadata": "/e3/1de1f8c87f/1/metadata.json",
+      "transcript": "/e3/1de1f8c87f/1/full.jsonl",
+      "context": "/e3/1de1f8c87f/1/context.md",
+      "content_hash": "/e3/1de1f8c87f/1/content_hash.txt",
+      "prompt": "/e3/1de1f8c87f/1/prompt.txt"
     }
   ]
 }

@@ -1,0 +1,31 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "e31de1f8c87f",
+  "session_id": "525069a3-d67f-4d8b-9295-b94514f7844e",
+  "strategy": "manual-commit",
+  "created_at": "2026-03-26T07:07:55.781019Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "src/core/agent/agent.py",
+    "src/core/agent/cli.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/modules/tool_context.py",
+    "src/core/context/types.py",
+    "src/core/engine/engine.py",
+    "src/core/llm/services/kimi_service.py",
+    "src/main.py"
+  ],
+  "agent": "Cursor",
+  "turn_id": "fd709031c452",
+  "initial_attribution": {
+    "calculated_at": "2026-03-26T07:07:55.769769Z",
+    "agent_lines": 144,
+    "human_added": 7,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 151,
+    "agent_percentage": 95.36423841059603
+  }
+}
