@@ -218,3 +218,35 @@ class CompressionResult:
     kept_count: int = 0
     summary: str = ""
     reason: str = ""
+
+
+@dataclass
+class SystemPart:
+    """一段 system 级内容，最终合并进唯一的 system message。
+
+    tag: XML 标签名（如 "long_term_memory"），用于包裹内容
+    description: 对这段内容的说明，会写入 XML 标签的 description 属性
+    content: 实际内容文本
+    """
+
+    tag: str
+    description: str
+    content: str
+
+    def render(self) -> str:
+        """渲染为带 XML 标签的文本段落。"""
+        if self.description:
+            return f'<{self.tag} description="{self.description}">\n{self.content}\n</{self.tag}>'
+        return f"<{self.tag}>\n{self.content}\n</{self.tag}>"
+
+
+@dataclass
+class ContextParts:
+    """模块 format() 的返回类型，区分内容的投递目标。
+
+    system_parts: 带标签的文本段落，最终合并进唯一的 system message。
+    message_items: ContextItem 列表，作为独立 message 放入对话列表。
+    """
+
+    system_parts: list[SystemPart] = field(default_factory=list)
+    message_items: list[ContextItem] = field(default_factory=list)

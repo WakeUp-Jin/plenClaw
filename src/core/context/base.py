@@ -1,7 +1,9 @@
 """BaseContext generic abstract base class.
 
 Every context module inherits from ``BaseContext[T]`` and implements ``format()``
-to produce a list of ``ContextItem`` instances for the context assembly pipeline.
+to produce a ``ContextParts`` instance for the context assembly pipeline.
+``ContextParts`` separates system-level text (merged into one system message)
+from conversation-level messages (placed in the message list).
 """
 
 from __future__ import annotations
@@ -9,7 +11,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Generic, TypeVar
 
-from core.context.types import ContextItem
+from core.context.types import ContextParts
 
 T = TypeVar("T")
 
@@ -52,6 +54,6 @@ class BaseContext(ABC, Generic[T]):
         return len(self._items) == 0
 
     @abstractmethod
-    def format(self) -> list[ContextItem]:
-        """Subclasses convert stored items into a list of ContextItems."""
+    def format(self) -> ContextParts:
+        """子类返回 ContextParts，声明内容投递到 system 还是 messages。"""
         ...

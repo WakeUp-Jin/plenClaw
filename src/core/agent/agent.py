@@ -47,10 +47,12 @@ class Agent:
 
     async def run(self, user_text: str, chat_id: str = "", open_id: str = "") -> str:
         logger.info("Agent run: user=%s, chat=%s, text=%s", open_id, chat_id, user_text[:80])
-
+        
+        # 命令拦截、然后清空对话
         if user_text.strip() in CLEAR_COMMANDS:
             return self._handle_clear()
-
+        
+        # 用户类型转换为ContextItem
         user_item = ContextItem(
             role="user",
             content=user_text,
@@ -58,9 +60,11 @@ class Agent:
             priority=MessagePriority.HIGH,
         )
         self._ctx.append_item(user_item)
-
+        
+        # 标记对话开始
         self._ctx.short_term_memory.mark_turn_start()
 
+        # 获取上下文、工具、获取上下文
         messages = self._ctx.get_context()
         tools = self._tool_manager.get_formatted_tools()
         llm = self._registry.get_high()

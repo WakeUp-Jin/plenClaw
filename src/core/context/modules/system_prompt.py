@@ -6,14 +6,14 @@ can be registered by external modules (e.g. user-defined prompts loaded from
 files, tool descriptions, memory injection, etc.).
 
 Segments are assembled in **descending** priority order (higher priority
-appears earlier in the final prompt) and merged into a single ``system``
-ContextItem.
+appears earlier in the final prompt) and returned as a single ``SystemPart``
+inside ``ContextParts``.
 """
 
 from __future__ import annotations
 
 from core.context.base import BaseContext
-from core.context.types import ContextItem, MessagePriority, PromptSegment
+from core.context.types import PromptSegment, ContextParts, SystemPart
 
 DEFAULT_SYSTEM_PROMPT = """\
 你是 PineClaw，一个AI 助手。你可以帮助用户：
@@ -108,13 +108,10 @@ class SystemPromptContext(BaseContext[PromptSegment]):
     # BaseContext interface
     # ------------------------------------------------------------------
 
-    def format(self) -> list[ContextItem]:
+    def format(self) -> ContextParts:
         prompt = self.get_prompt()
         if not prompt:
-            return []
-        return [ContextItem(
-            role="system",
-            content=prompt,
-            source="system_prompt",
-            priority=MessagePriority.CRITICAL,
-        )]
+            return ContextParts()
+        return ContextParts(system_parts=[
+            SystemPart(tag="system_prompt", description="", content=prompt),
+        ])

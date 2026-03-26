@@ -18,7 +18,10 @@ from __future__ import annotations
 from typing import Callable, Awaitable
 
 from core.context.base import BaseContext
-from core.context.types import ContextItem, CompressionResult, MessagePriority
+from core.context.types import (
+    ContextItem, CompressionResult, MessagePriority,
+    ContextParts, SystemPart,
+)
 from core.context.utils.compressor import ContextCompressor
 from core.context.utils.message_sanitizer import sanitize_messages
 from core.context.utils.token_estimator import TokenEstimator
@@ -162,19 +165,18 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
     # BaseContext interface
     # ------------------------------------------------------------------
 
-    def format(self) -> list[ContextItem]:
-        result: list[ContextItem] = []
+    def format(self) -> ContextParts:
+        parts = ContextParts()
 
         if self._summary:
-            result.append(ContextItem(
-                role="system",
-                content=f"以下是之前对话的压缩摘要：\n\n{self._summary}",
-                source="summary",
-                priority=MessagePriority.HIGH,
+            parts.system_parts.append(SystemPart(
+                tag="conversation_summary",
+                description="以下是之前对话的压缩摘要",
+                content=self._summary,
             ))
 
-        result.extend(self._items)
-        return result
+        parts.message_items.extend(self._items)
+        return parts
 
     # ------------------------------------------------------------------
     # Internal: load memory from storage

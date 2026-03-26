@@ -10,12 +10,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from core.context.base import BaseContext
-from core.context.types import ContextItem, MessagePriority
+from core.context.types import ContextParts, SystemPart
 
 if TYPE_CHECKING:
     from storage.memory_store import LocalMemoryStore
-
-MEMORY_PREAMBLE = "以下是你对用户的长期记忆，请基于这些信息个性化回复：\n\n"
 
 
 class LongTermMemoryContext(BaseContext[str]):
@@ -32,18 +30,19 @@ class LongTermMemoryContext(BaseContext[str]):
         if text and text.strip():
             self.add(text)
 
-    def format(self) -> list[ContextItem]:
+    def format(self) -> ContextParts:
         all_text = self.get_all()
         if not all_text:
             text = self._store.get_memory_text()
             if not text or not text.strip():
-                return []
+                return ContextParts()
         else:
             text = "\n".join(all_text)
 
-        return [ContextItem(
-            role="system",
-            content=f"{MEMORY_PREAMBLE}{text}",
-            source="long_term_memory",
-            priority=MessagePriority.HIGH,
-        )]
+        return ContextParts(system_parts=[
+            SystemPart(
+                tag="long_term_memory",
+                description="以下是你对用户的长期记忆，请基于这些信息个性化回复",
+                content=text,
+            ),
+        ])
