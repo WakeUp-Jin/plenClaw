@@ -6,9 +6,9 @@ ShortTermMemoryContext to build the message sequence sent to the LLM.
 All message types (user input, tool calls/responses, assistant replies)
 flow through ShortTermMemoryContext as a unified stream.
 
-Internally every module works with ``ContextItem``; the public
-``get_context()`` method converts the assembled items into plain message
-dicts via ``_to_messages()``.
+Each module's ``format()`` returns a ``ContextParts`` containing:
+- ``system_parts``: ``SystemPart`` fragments merged into one system message.
+- ``message_items``: ``ContextItem`` list placed into the conversation messages.
 """
 
 from __future__ import annotations
@@ -16,18 +16,23 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Awaitable
 
-from core.context.types import ContextItem, CompressionConfig, MessagePriority, PromptSegment
+from core.context.types import (
+    ContextItem, CompressionConfig, MessagePriority, PromptSegment,
+    ContextParts, SystemPart,
+)
 from core.context.modules.system_prompt import SystemPromptContext
 from core.context.modules.short_term_memory import ShortTermMemoryContext
 from core.context.utils.message_sanitizer import sanitize_messages
 from core.context.utils.token_estimator import TokenEstimator
 from core.skill.scanner import scan_skills, build_catalog
-from utils import logger
+from utils.logger import logger
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.context.modules.long_term_memory import LongTermMemoryContext
+
+SYSTEM_PART_SEPARATOR = "\n\n"
 
 
 class ContextManager:
@@ -71,10 +76,23 @@ class ContextManager:
         self.append_item(item)
 
     def get_context(self) -> list[dict[str, Any]]:
-        """Build the full LLM context: assemble ContextItems then convert to
-        message dicts."""
-        items = self._build_context_items()
-        return self._to_messages(items)
+        """组装最终的 LLM message 数组。
+
+        1. 从各模块收集 system_parts 和 message_items
+        2. 将所有 system_parts 渲染为 XML 标签并合并为一条 system message
+        3. 将 message_items 逐个转为 message dict
+        """
+        system_parts, message_items = self._collect_parts()
+        messages: list[dict[str, Any]] = []
+
+        if system_parts:
+            rendered = SYSTEM_PART_SEPARATOR.join(
+                part.render() for part in system_parts if part.content.strip()
+            )
+            messages.append({"role": "system", "content": rendered})
+
+        messages.extend(item.to_message() for item in message_items)
+        return self._sanitize(messages)
 
     def needs_compression(self) -> bool:
         return self._short_term.needs_compression(
@@ -145,27 +163,43 @@ class ContextManager:
     # Private: context assembly
     # ------------------------------------------------------------------
 
-    def _build_context_items(self) -> list[ContextItem]:
-        """Assemble items in canonical order:
-        1. system prompt
-        2. long-term memory
-        3. short-term memory (summary + all messages)
+    def _collect_parts(self) -> tuple[list[SystemPart], list[ContextItem]]:
+        """从各模块收集 system_parts 和 message_items。
+
+        收集顺序决定了 system message 内部的段落顺序：
+        1. 系统提示词（核心指令，最前面）
+        2. 长期记忆（用户画像/偏好）
+        3. 压缩摘要（历史背景）
         """
+        all_system: list[SystemPart] = []
+        all_messages: list[ContextItem] = []
+
+        for parts in [
+            self._system_prompt.format(),
+            self._long_term.format() if self._long_term else ContextParts(),
+            self._short_term.format(),
+        ]:
+            all_system.extend(parts.system_parts)
+            all_messages.extend(parts.message_items)
+
+        return all_system, all_messages
+
+    def _build_context_items(self) -> list[ContextItem]:
+        """返回 ContextItem 列表（用于 token 估算等场景）。"""
+        system_parts, message_items = self._collect_parts()
         items: list[ContextItem] = []
-
-        items.extend(self._system_prompt.format())
-
-        if self._long_term is not None:
-            items.extend(self._long_term.format())
-
-        items.extend(self._short_term.format())
-
+        if system_parts:
+            rendered = SYSTEM_PART_SEPARATOR.join(
+                part.render() for part in system_parts if part.content.strip()
+            )
+            items.append(ContextItem(
+                role="system",
+                content=rendered,
+                source="merged_system",
+                priority=MessagePriority.CRITICAL,
+            ))
+        items.extend(message_items)
         return items
-
-    def _to_messages(self, items: list[ContextItem]) -> list[dict[str, Any]]:
-        """Convert ContextItem list to message dicts and sanitise."""
-        messages = [item.to_message() for item in items]
-        return self._sanitize(messages)
 
     @staticmethod
     def _sanitize(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
