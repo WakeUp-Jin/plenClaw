@@ -1,0 +1,398 @@
+<attached_files>
+
+<code_selection path="/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context/manager.py" lines="157-161">
+   157|        items.extend(self._system_prompt.format())
+   158|
+   159|        if self._long_term is not None:
+   160|            items.extend(self._long_term.format())
+   161|
+</code_selection>
+
+</attached_files>
+
+@manager.py (157-161) ，这里的上下文拼接是有点问题的，会有两个system，所以关于系统提示词这个消息角色的内容拼接，是需要好好设计设计，系统提示词动态添加，看看要如何设计吧
+
+---
+
+我觉得主要是概念混乱，内部的上下文数据结构和发送给LLM的message数组数据结构是混乱的，我觉得应该提供一个方法，最后传递给llm的时候组合成为message结构，例如：增加一个标签写到哪里，一个是写到system中，一个是写到message列表中，所以这个区分要有，所以我们继续讨论看看
+
+---
+
+细微调整一下，那个插入系统提示词的时候，有一点解释和说明这一块的内容是什么的，这个怎么设计呢？不然直接塞入system中，谁知道什么是什么
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/system%E6%B6%88%E6%81%AF%E5%90%88%E5%B9%B6%E8%AE%BE%E8%AE%A1_5afb42ee.plan.md" lines="1-341">
+     1|---
+     2|name: System消息合并设计
+     3|overview: 在模块级别区分"写入 system"和"写入 messages 列表"，用 ContextParts + SystemPart 实现。各模块 format() 返回 ContextParts，其中 system_parts 是带标签和描述的 SystemPart 列表，由 ContextManager 统一合并为一条带 XML 标签结构的 system message。
+     4|todos:
+     5|  - id: add-types
+     6|    content: 在 types.py 中新增 SystemPart（tag/description/content）和 ContextParts（system_parts/message_items）
+     7|    status: pending
+     8|  - id: update-base-context
+     9|    content: 修改 BaseContext.format() 返回值从 list[ContextItem] 改为 ContextParts
+    10|    status: pending
+    11|  - id: update-system-prompt
+    12|    content: 修改 SystemPromptContext.format()，内容放到 system_parts
+    13|    status: pending
+    14|  - id: update-long-term
+    15|    content: 修改 LongTermMemoryContext.format()，内容放到 system_parts
+    16|    status: pending
+    17|  - id: update-short-term
+    18|    content: 修改 ShortTermMemoryContext.format()，摘要放 system_parts，对话放 message_items
+    19|    status: pending
+    20|  - id: update-manager
+    21|    content: 重写 ContextManager 的组装逻辑，收集 SystemPart 合并为带 XML 标签的 system message
+    22|    status: pending
+    23|  - id: verify
+    24|    content: 检查 linter，确认 estimate_tokens 等间接依赖也兼容
+    25|    status: pending
+    26|isProject: false
+    27|---
+    28|
+    29|# System 消息投递目标设计（含 XML 标签标注）
+    30|
+    31|## 问题本质
+    32|
+    33|1. **内部数据结构和 LLM message 格式耦合**：各模块通过 `ContextItem(role="system")` 直接决定了 LLM message 的 role，导致多条 system message
+    34|2. **合并后内容没有标注**：如果只是简单拼接，模型不知道哪段是什么，调试时也看不懂
+    35|
+    36|## 核心设计
+    37|
+    38|### 新数据结构
+    39|
+    40|`**SystemPart`** —— 一段带身份标识的 system 内容：
+    41|
+    42|```python
+    43|@dataclass
+    44|class SystemPart:
+    45|    """一段 system 级内容，最终合并进唯一的 system message。
+    46|
+    47|    tag: XML 标签名，如 "long_term_memory"
+    48|    description: 对这段内容的说明文字，如 "以下是你对用户的长期记忆"
+    49|    content: 实际内容文本
+    50|    """
+    51|    tag: str
+    52|    description: str
+    53|    content: str
+    54|```
+    55|
+    56|`**ContextParts**` —— 模块 format() 的返回类型：
+    57|
+    58|```python
+    59|@dataclass
+    60|class ContextParts:
+    61|    """模块 format() 的返回类型，区分内容的投递目标。"""
+    62|    system_parts: list[SystemPart] = field(default_factory=list)
+    63|    message_items: list[ContextItem] = field(default_factory=list)
+    64|```
+    65|
+    66|### 合并后的 system message 效果
+    67|
+    68|ContextManager 将所有 SystemPart 合并为一条 system message，每段用 XML 标签包裹：
+    69|
+    70|```xml
+    71|<system_prompt>
+    72|你是 PineClaw，一个AI 助手。你可以帮助用户：
+    73|- 创建、读取、修改飞书文档
+    74|...
+    75|</system_prompt>
+    76|
+    77|<long_term_memory description="以下是你对用户的长期记忆，请基于这些信息个性化回复">
+    78|用户名：小明
+    79|偏好：中文回复
+    80|</long_term_memory>
+    81|
+    82|<conversation_summary description="以下是之前对话的压缩摘要">
+    83|用户讨论了飞书文档创建和多维表格的使用...
+    84|</conversation_summary>
+    85|```
+    86|
+    87|核心提示词（system_prompt）不需要 description（它本身就是指令），其他段落的 description 起到两个作用：
+    88|
+    89|1. 告诉模型这段内容是什么、怎么用
+    90|2. 方便开发者调试时快速定位
+    91|
+    92|### 各模块的投递策略
+    93|
+    94|
+    95|| 模块                          | tag                    | description                 | 投递目标          |
+    96|| --------------------------- | ---------------------- | --------------------------- | ------------- |
+    97|| SystemPromptContext         | `system_prompt`        | （空）                         | system_parts  |
+    98|| SystemPromptContext (skill) | `available_skills`     | "以下是可用的技能列表"                | system_parts  |
+    99|| LongTermMemoryContext       | `long_term_memory`     | "以下是你对用户的长期记忆，请基于这些信息个性化回复" | system_parts  |
+   100|| ShortTermMemory (摘要)        | `conversation_summary` | "以下是之前对话的压缩摘要"              | system_parts  |
+   101|| ShortTermMemory (对话)        | —                      | —                           | message_items |
+   102|
+   103|
+   104|---
+   105|
+   106|## 具体改动
+   107|
+   108|### 文件 1：[src/core/context/types.py](src/core/context/types.py)
+   109|
+   110|新增两个数据类（放在文件末尾，`CompressionResult` 之后）：
+   111|
+   112|```python
+   113|@dataclass
+   114|class SystemPart:
+   115|    """一段 system 级内容，最终合并进唯一的 system message。
+   116|
+   117|    tag: XML 标签名（如 "long_term_memory"），用于包裹内容
+   118|    description: 对这段内容的说明，会写入 XML 标签的 description 属性
+   119|    content: 实际内容文本
+   120|    """
+   121|    tag: str
+   122|    description: str
+   123|    content: str
+   124|
+   125|    def render(self) -> str:
+   126|        """渲染为带 XML 标签的文本段落。"""
+   127|        if self.description:
+   128|            return f'<{self.tag} description="{self.description}">\n{self.content}\n</{self.tag}>'
+   129|        return f"<{self.tag}>\n{self.content}\n</{self.tag}>"
+   130|
+   131|
+   132|@dataclass
+   133|class ContextParts:
+   134|    """模块 format() 的返回类型，区分内容的投递目标。
+   135|
+   136|    system_parts: 带标签的文本段落，最终合并进唯一的 system message。
+   137|    message_items: ContextItem 列表，作为独立 message 放入对话列表。
+   138|    """
+   139|    system_parts: list[SystemPart] = field(default_factory=list)
+   140|    message_items: list[ContextItem] = field(default_factory=list)
+   141|```
+   142|
+   143|`render()` 方法封装了 XML 标签的渲染逻辑——如果有 description 就加 description 属性，没有就只用标签名包裹。这样渲染逻辑和数据结构在一起，不散落到 manager 中。
+   144|
+   145|### 文件 2：[src/core/context/base.py](src/core/context/base.py)
+   146|
+   147|```python
+   148|from core.context.types import ContextItem, ContextParts  # 新增 ContextParts
+   149|
+   150|class BaseContext(ABC, Generic[T]):
+   151|    # ... 其他方法不变 ...
+   152|
+   153|    @abstractmethod
+   154|    def format(self) -> ContextParts:  # 返回值改为 ContextParts
+   155|        """子类返回 ContextParts，声明内容投递到 system 还是 messages。"""
+   156|        ...
+   157|```
+   158|
+   159|### 文件 3：[src/core/context/modules/system_prompt.py](src/core/context/modules/system_prompt.py)
+   160|
+   161|```python
+   162|from core.context.types import ContextItem, MessagePriority, PromptSegment, ContextParts, SystemPart
+   163|
+   164|def format(self) -> ContextParts:
+   165|    prompt = self.get_prompt()
+   166|    if not prompt:
+   167|        return ContextParts()
+   168|    return ContextParts(system_parts=[
+   169|        SystemPart(tag="system_prompt", description="", content=prompt),
+   170|    ])
+   171|```
+   172|
+   173|不再创建 `ContextItem(role="system")`，核心提示词没有 description（它本身就是指令，不需要额外解释）。
+   174|
+   175|### 文件 4：[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)
+   176|
+   177|```python
+   178|from core.context.types import ContextItem, MessagePriority, ContextParts, SystemPart
+   179|
+   180|def format(self) -> ContextParts:
+   181|    all_text = self.get_all()
+   182|    if not all_text:
+   183|        text = self._store.get_memory_text()
+   184|        if not text or not text.strip():
+   185|            return ContextParts()
+   186|    else:
+   187|        text = "\n".join(all_text)
+   188|
+   189|    return ContextParts(system_parts=[
+   190|        SystemPart(
+   191|            tag="long_term_memory",
+   192|            description="以下是你对用户的长期记忆，请基于这些信息个性化回复",
+   193|            content=text,
+   194|        ),
+   195|    ])
+   196|```
+   197|
+   198|注意：description 现在承担了原来 `MEMORY_PREAMBLE` 的职责，那个常量可以移除。
+   199|
+   200|### 文件 5：[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)
+   201|
+   202|```python
+   203|from core.context.types import ContextItem, CompressionResult, MessagePriority, ContextParts, SystemPart
+   204|
+   205|def format(self) -> ContextParts:
+   206|    parts = ContextParts()
+   207|
+   208|    if self._summary:
+   209|        parts.system_parts.append(SystemPart(
+   210|            tag="conversation_summary",
+   211|            description="以下是之前对话的压缩摘要",
+   212|            content=self._summary,
+   213|        ))
+   214|
+   215|    parts.message_items.extend(self._items)
+   216|    return parts
+   217|```
+   218|
+   219|### 文件 6：[src/core/context/manager.py](src/core/context/manager.py)
+   220|
+   221|核心组装逻辑重写：
+   222|
+   223|```python
+   224|from core.context.types import ContextItem, CompressionConfig, MessagePriority, PromptSegment, ContextParts, SystemPart
+   225|
+   226|SYSTEM_PART_SEPARATOR = "\n\n"
+   227|
+   228|def get_context(self) -> list[dict[str, Any]]:
+   229|    """组装最终的 LLM message 数组。"""
+   230|    system_parts, message_items = self._collect_parts()
+   231|    messages: list[dict[str, Any]] = []
+   232|
+   233|    if system_parts:
+   234|        rendered = SYSTEM_PART_SEPARATOR.join(
+   235|            part.render() for part in system_parts if part.content.strip()
+   236|        )
+   237|        messages.append({"role": "system", "content": rendered})
+   238|
+   239|    messages.extend(item.to_message() for item in message_items)
+   240|    return self._sanitize(messages)
+   241|
+   242|
+   243|def _collect_parts(self) -> tuple[list[SystemPart], list[ContextItem]]:
+   244|    """从各模块收集 system_parts 和 message_items。"""
+   245|    all_system: list[SystemPart] = []
+   246|    all_messages: list[ContextItem] = []
+   247|
+   248|    for parts in [
+   249|        self._system_prompt.format(),
+   250|        self._long_term.format() if self._long_term else ContextParts(),
+   251|        self._short_term.format(),
+   252|    ]:
+   253|        all_system.extend(parts.system_parts)
+   254|        all_messages.extend(parts.message_items)
+   255|
+   256|    return all_system, all_messages
+   257|
+   258|
+   259|def _build_context_items(self) -> list[ContextItem]:
+   260|    """返回 ContextItem 列表（用于 token 估算）。"""
+   261|    system_parts, message_items = self._collect_parts()
+   262|    items: list[ContextItem] = []
+   263|    if system_parts:
+   264|        rendered = SYSTEM_PART_SEPARATOR.join(
+   265|            part.render() for part in system_parts if part.content.strip()
+   266|        )
+   267|        items.append(ContextItem(
+   268|            role="system",
+   269|            content=rendered,
+   270|            source="merged_system",
+   271|            priority=MessagePriority.CRITICAL,
+   272|        ))
+   273|    items.extend(message_items)
+   274|    return items
+   275|```
+   276|
+   277|同时 `init_skills()` 也需要适配——现在 Skill 目录通过 `register_segment` 注入系统提示词，`SystemPromptContext` 的 segment 机制保持不变，它会在 `get_prompt()` 中把所有 segment 合并为一段文本，作为 `system_prompt` 这个 SystemPart 的 content。所以 `init_skills()` **不需要改动**。
+   278|
+   279|### 删除旧方法
+   280|
+   281|`_to_messages()` 方法不再需要（其逻辑已融入 `get_context()`），可以删除。
+   282|
+   283|---
+   284|
+   285|## 数据流总览
+   286|
+   287|```
+   288|各模块 format()                        ContextManager
+   289|┌────────────────────┐
+   290|│ SystemPromptContext │─→ ContextParts
+   291|│   system_parts:    │     SystemPart(tag="system_prompt", desc="", content="你是PineClaw...")
+   292|│   message_items:   │     (空)
+   293|└────────────────────┘
+   294|┌────────────────────┐
+   295|│ LongTermMemory     │─→ ContextParts
+   296|│   system_parts:    │     SystemPart(tag="long_term_memory", desc="以下是...", content="用户偏好...")
+   297|│   message_items:   │     (空)
+   298|└────────────────────┘                  _collect_parts()
+   299|┌────────────────────┐                  ┌──────────────────────────┐
+   300|│ ShortTermMemory    │─→ ContextParts ─→│ all_system_parts:        │
+   301|│   system_parts:    │     SystemPart   │   [SP1, SP2, SP3]       │
+   302|│   message_items:   │     [item, ...]  │ all_message_items:       │
+   303|└────────────────────┘                  │   [user, asst, tool, ...] │
+   304|                                        └────────────┬─────────────┘
+   305|                                                     │ get_context()
+   306|                                                     ▼
+   307|                                        ┌──────────────────────────┐
+   308|                                        │ messages = [             │
+   309|                                        │   {role: "system",       │
+   310|                                        │    content:              │
+   311|                                        │      "<system_prompt>    │
+   312|                                        │       ...                │
+   313|                                        │      </system_prompt>    │
+   314|                                        │                          │
+   315|                                        │      <long_term_memory>  │
+   316|                                        │       ...                │
+   317|                                        │      </long_term_memory> │
+   318|                                        │                          │
+   319|                                        │      <conversation_...>  │
+   320|                                        │       ...                │
+   321|                                        │      </conversation_...>"|
+   322|                                        │   },                     │
+   323|                                        │   {role: "user", ...},   │
+   324|                                        │   {role: "assistant",...},│
+   325|                                        │   ...                    │
+   326|                                        │ ]                        │
+   327|                                        └──────────────────────────┘
+   328|                                                     │
+   329|                                                     ▼ LLM API
+   330|```
+   331|
+   332|## 涉及文件清单
+   333|
+   334|- [src/core/context/types.py](src/core/context/types.py) — 新增 SystemPart + ContextParts
+   335|- [src/core/context/base.py](src/core/context/base.py) — format() 返回值改为 ContextParts
+   336|- [src/core/context/modules/system_prompt.py](src/core/context/modules/system_prompt.py) — format() 适配
+   337|- [src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py) — format() 适配，移除 MEMORY_PREAMBLE
+   338|- [src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py) — format() 适配
+   339|- [src/core/context/manager.py](src/core/context/manager.py) — 重写组装逻辑，删除 _to_messages()
+   340|
+   341|
+</code_selection>
+
+</attached_files>
+
+System 消息投递目标设计（含 XML 标签标注）
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+def _build_context_items(self) -> list[ContextItem]:
+    """返回 ContextItem 列表（用于 token 估算）。"""
+    system_parts, message_items = self._collect_parts()
+    items: list[ContextItem] = []
+    if system_parts:
+        rendered = SYSTEM_PART_SEPARATOR.join(
+            part.render() for part in system_parts if part.content.strip()
+        )
+        items.append(ContextItem(
+            role="system",
+            content=rendered,
+            source="merged_system",
+            priority=MessagePriority.CRITICAL,
+        ))
+    items.extend(message_items)
+    return items
+
+这个代码是什么意思，不是没有估算啦吗？Token的计费都是从接口的返回准确的Token*价格得来的

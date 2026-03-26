@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "9f52c73babe7",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "src/core/agent/agent.py",
+    "src/core/context/base.py",
+    "src/core/context/manager.py",
+    "src/core/context/modules/long_term_memory.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/context/modules/system_prompt.py",
+    "src/core/context/types.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/9f/52c73babe7/0/metadata.json",
+      "transcript": "/9f/52c73babe7/0/full.jsonl",
+      "context": "/9f/52c73babe7/0/context.md",
+      "content_hash": "/9f/52c73babe7/0/content_hash.txt",
+      "prompt": "/9f/52c73babe7/0/prompt.txt"
+    }
+  ]
+}
