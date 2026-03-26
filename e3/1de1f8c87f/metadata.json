@@ -1,0 +1,21 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "e31de1f8c87f",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src/core/context/types.py",
+    "src/core/engine/engine.py",
+    "src/core/llm/services/kimi_service.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e3/1de1f8c87f/0/metadata.json",
+      "transcript": "/e3/1de1f8c87f/0/full.jsonl",
+      "context": "/e3/1de1f8c87f/0/context.md",
+      "content_hash": "/e3/1de1f8c87f/0/content_hash.txt",
+      "prompt": "/e3/1de1f8c87f/0/prompt.txt"
+    }
+  ]
+}

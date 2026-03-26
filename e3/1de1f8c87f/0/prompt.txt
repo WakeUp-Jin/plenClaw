@@ -1,0 +1,125 @@
+<attached_files>
+
+<code_selection path="/Users-xjk-Desktop-ScriptCode-PineClaw/7" lines="156-160">
+   156|[Error] Error code: 400 - {'error': {'message': 'thinking is enabled      
+   157|  but reasoning_content is missing in assistant tool call message at      
+   158|  index 2', 'type': 'invalid_request_error'}}，那为什么会报出这个问题，     
+   159|  我看to_message也没有问题呀，这个历史记录文件就一条消息/Users/xjk/.pin    
+   160|  eclaw/memory/short_term/20260326_135830/history.jsonl
+</code_selection>
+
+<terminal_selection title="Terminal" path="/Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/terminals/7.txt" lines="162-166">
+[Error] Error code: 400 - {'error': {'message': 'thinking is enabled      
+  but reasoning_content is missing in assistant tool call message at      
+  index 2', 'type': 'invalid_request_error'}}，那为什么会报出这个问题，     
+  我看to_message也没有问题呀，这个历史记录文件就一条消息/Users/xjk/.pin    
+  eclaw/memory/short_term/20260326_135830/history.jsonl
+</terminal_selection>
+
+</attached_files>
+
+@/Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/terminals/7.txt:162-166 ，看看这个bug是为什么，不仅解决bug，还要分析bug的原因，导致的原因
+
+---
+
+<attached_files>
+
+<code_selection path="/Users-xjk-Desktop-ScriptCode-PineClaw/6" lines="204-269">
+   204|You > 看看这个项目的文件吧
+   205|[2026-03-26 13:58:36] INFO pineclaw.agent - Agent run: user=cli-user, chat=cli, text=看看这个项目的文件吧
+   206|[2026-03-26 13:58:36] INFO pineclaw.llm.factory - Creating LLM service: provider=kimi, model=kimi-k2.5
+   207|[2026-03-26 13:58:36] INFO pineclaw.llm.registry - LLM service created for tier=high: provider=kimi, model=kimi-k2.5
+   208|[2026-03-26 13:58:54] INFO pineclaw.engine - Tool call [1]: ListFiles({"folder_path": "."})
+   209|[2026-03-26 13:58:54] INFO pineclaw - Tool executing: ListFiles (call=ListFiles:0)
+   210|[2026-03-26 13:58:54] INFO pineclaw - Tool ListFiles success (call=ListFiles:0, 1ms)
+   211|[2026-03-26 13:58:55] ERROR pineclaw - Agent error: Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+   212|Traceback (most recent call last):
+   213|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/agent/cli.py", line 93, in _repl
+   214|    reply = await agent.run(user_input, chat_id="cli", open_id="cli-user")
+   215|            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   216|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/agent/agent.py", line 66, in run
+   217|    result = await self._engine.run(llm, messages, tools, chat_id=chat_id)
+   218|             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   219|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/engine/engine.py", line 62, in run
+   220|    response: LLMResponse = await llm.complete(working_messages, tools)
+   221|                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   222|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/base.py", line 42, in complete
+   223|    return await self._complete_with_retry(messages, tools, **kwargs)
+   224|           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   225|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/base.py", line 69, in _complete_with_retry
+   226|    return await self._do_complete(messages, tools, **kwargs)
+   227|           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   228|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/kimi_service.py", line 50, in _do_complete
+   229|    resp = await self._client.chat.completions.create(**params)
+   230|           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   231|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 2714, in create
+   232|    return await self._post(
+   233|           ^^^^^^^^^^^^^^^^^
+   234|    ...<49 lines>...
+   235|    )
+   236|    ^
+   237|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1884, in post
+   238|    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+   239|           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   240|  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1669, in request
+   241|    raise self._make_status_error_from_response(err.response) from None
+   242|openai.BadRequestError: Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+   243|
+   244|[Error] Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+   245|
+   246|You > 
+</code_selection>
+
+<terminal_selection title="Terminal" path="/Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/terminals/6.txt" lines="210-275">
+You > 看看这个项目的文件吧
+[2026-03-26 13:58:36] INFO pineclaw.agent - Agent run: user=cli-user, chat=cli, text=看看这个项目的文件吧
+[2026-03-26 13:58:36] INFO pineclaw.llm.factory - Creating LLM service: provider=kimi, model=kimi-k2.5
+[2026-03-26 13:58:36] INFO pineclaw.llm.registry - LLM service created for tier=high: provider=kimi, model=kimi-k2.5
+[2026-03-26 13:58:54] INFO pineclaw.engine - Tool call [1]: ListFiles({"folder_path": "."})
+[2026-03-26 13:58:54] INFO pineclaw - Tool executing: ListFiles (call=ListFiles:0)
+[2026-03-26 13:58:54] INFO pineclaw - Tool ListFiles success (call=ListFiles:0, 1ms)
+[2026-03-26 13:58:55] ERROR pineclaw - Agent error: Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+Traceback (most recent call last):
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/agent/cli.py", line 93, in _repl
+    reply = await agent.run(user_input, chat_id="cli", open_id="cli-user")
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/agent/agent.py", line 66, in run
+    result = await self._engine.run(llm, messages, tools, chat_id=chat_id)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/engine/engine.py", line 62, in run
+    response: LLMResponse = await llm.complete(working_messages, tools)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/base.py", line 42, in complete
+    return await self._complete_with_retry(messages, tools, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/base.py", line 69, in _complete_with_retry
+    return await self._do_complete(messages, tools, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/llm/services/kimi_service.py", line 50, in _do_complete
+    resp = await self._client.chat.completions.create(**params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/resources/chat/completions/completions.py", line 2714, in create
+    return await self._post(
+           ^^^^^^^^^^^^^^^^^
+    ...<49 lines>...
+    )
+    ^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1884, in post
+    return await self.request(cast_to, opts, stream=stream, stream_cls=stream_cls)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/xjk/Desktop/ScriptCode/PineClaw/.venv/lib/python3.14/site-packages/openai/_base_client.py", line 1669, in request
+    raise self._make_status_error_from_response(err.response) from None
+openai.BadRequestError: Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+
+[Error] Error code: 400 - {'error': {'message': 'thinking is enabled but reasoning_content is missing in assistant tool call message at index 2', 'type': 'invalid_request_error'}}
+
+You > 
+</terminal_selection>
+
+</attached_files>
+
+@/Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/terminals/6.txt:210-275 ，原始的bug信息在这里
+
+---
+
+修改看看吧
