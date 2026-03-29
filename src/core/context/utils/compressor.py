@@ -1,18 +1,63 @@
 """Context compression strategies.
 
-Provides LLM-based summarisation and tool-message trimming to keep the
-context window within budget.
+Provides LLM-based summarisation at multiple granularities:
+- Week summary: from daily raw records
+- Month summary: from daily records + week summaries
+- Year summary: from month summaries
+
+Also retains the legacy in-memory compression for within-day overflow.
 """
 
 from __future__ import annotations
 
-from typing import Any, Callable, Awaitable
+import json
+from pathlib import Path
+from typing import Callable, Awaitable
 
 from core.context.types import ContextItem, CompressionResult
 from core.context.utils.token_estimator import TokenEstimator
 
 
-COMPRESSION_PROMPT = (
+# ------------------------------------------------------------------
+# Prompt templates
+# ------------------------------------------------------------------
+
+_WEEK_PROMPT = (
+    "请将以下 {n} 天的对话记录压缩为周摘要。\n\n"
+    "要求：\n"
+    "- 按时间线梳理本周发生了什么\n"
+    "- 保留所有关键事件和交互\n"
+    "- 保留涉及的文件路径和技术决策\n"
+    "- 保留未完成的任务\n"
+    "- 追求事件完整性\n\n"
+    "日期范围: {start} 到 {end}\n\n"
+    "---对话记录---\n{content}\n"
+)
+
+_MONTH_PROMPT = (
+    "请将以下一个月的对话记录和周摘要合并为月摘要。\n\n"
+    "要求：\n"
+    "- 提炼本月的核心决策和重要变化\n"
+    "- 保留关键技术选型和架构决策\n"
+    "- 保留重要的项目里程碑\n"
+    "- 追求关键节点的准确性\n\n"
+    "月份: {month}\n\n"
+    "---周摘要---\n{week_summaries}\n\n"
+    "---原始对话记录---\n{daily_content}\n"
+)
+
+_YEAR_PROMPT = (
+    "请将以下月摘要合并为年度摘要。\n\n"
+    "要求：\n"
+    "- 提炼本年最重要的里程碑\n"
+    "- 保留影响深远的决策\n"
+    "- 保留重大项目成果\n"
+    "- 保持简洁，突出重点\n\n"
+    "年份: {year}\n\n"
+    "---月摘要---\n{month_summaries}\n"
+)
+
+_INTRA_DAY_PROMPT = (
     "请将以下对话记录压缩为简洁的摘要。\n\n"
     "要求：\n"
     "- 保留所有关键决策和结论\n"
@@ -25,10 +70,80 @@ COMPRESSION_PROMPT = (
 
 
 class ContextCompressor:
-    """Orchestrates context compression using multiple strategies."""
+    """Orchestrates context compression at multiple granularities."""
 
     def __init__(self, token_estimator: TokenEstimator | None = None):
         self._estimator = token_estimator or TokenEstimator()
+
+    # ------------------------------------------------------------------
+    # Multi-layer summary methods
+    # ------------------------------------------------------------------
+
+    async def compress_to_week_summary(
+        self,
+        daily_jsonl_paths: list[Path],
+        summarize_fn: Callable[[str], Awaitable[str]],
+    ) -> str:
+        """Read consecutive daily .jsonl files and produce a week summary."""
+        parts: list[str] = []
+        for p in sorted(daily_jsonl_paths, key=lambda x: x.name):
+            day_text = self._jsonl_to_text(p)
+            if day_text:
+                parts.append(f"## {p.stem}\n{day_text}")
+
+        if not parts:
+            return ""
+
+        content = "\n\n".join(parts)
+        start = daily_jsonl_paths[0].stem if daily_jsonl_paths else "?"
+        end = daily_jsonl_paths[-1].stem if daily_jsonl_paths else "?"
+
+        prompt = _WEEK_PROMPT.format(
+            n=len(daily_jsonl_paths),
+            start=start,
+            end=end,
+            content=content,
+        )
+        return await summarize_fn(prompt)
+
+    async def compress_to_month_summary(
+        self,
+        daily_jsonl_paths: list[Path],
+        week_summary_texts: list[str],
+        month_label: str,
+        summarize_fn: Callable[[str], Awaitable[str]],
+    ) -> str:
+        """Combine daily records + week summaries into a month summary."""
+        daily_parts: list[str] = []
+        for p in sorted(daily_jsonl_paths, key=lambda x: x.name):
+            day_text = self._jsonl_to_text(p)
+            if day_text:
+                daily_parts.append(f"## {p.stem}\n{day_text}")
+
+        daily_content = "\n\n".join(daily_parts) if daily_parts else "(无日记录)"
+        week_content = "\n\n---\n\n".join(week_summary_texts) if week_summary_texts else "(无周摘要)"
+
+        prompt = _MONTH_PROMPT.format(
+            month=month_label,
+            week_summaries=week_content,
+            daily_content=daily_content,
+        )
+        return await summarize_fn(prompt)
+
+    async def compress_to_year_summary(
+        self,
+        month_summary_texts: list[str],
+        year_label: str,
+        summarize_fn: Callable[[str], Awaitable[str]],
+    ) -> str:
+        """Combine month summaries into a year summary."""
+        content = "\n\n---\n\n".join(month_summary_texts)
+        prompt = _YEAR_PROMPT.format(year=year_label, month_summaries=content)
+        return await summarize_fn(prompt)
+
+    # ------------------------------------------------------------------
+    # Legacy: in-memory compression for within-day overflow
+    # ------------------------------------------------------------------
 
     async def compress_with_llm(
         self,
@@ -36,11 +151,7 @@ class ContextCompressor:
         keep_ratio: float,
         summarize_fn: Callable[[str], Awaitable[str]],
     ) -> CompressionResult:
-        """Compress older items via LLM summary, keeping the most recent *keep_ratio*.
-
-        Returns a ``CompressionResult`` with the generated summary text.  The
-        caller is responsible for replacing the item list.
-        """
+        """Compress older items via LLM summary, keeping the most recent portion."""
         if len(items) < 4:
             return CompressionResult(compressed=False, reason="too_few_messages")
 
@@ -54,7 +165,7 @@ class ContextCompressor:
             return CompressionResult(compressed=False, reason="nothing_to_compress")
 
         text = self._items_to_text(to_compress)
-        prompt = COMPRESSION_PROMPT + text
+        prompt = _INTRA_DAY_PROMPT + text
 
         summary = await summarize_fn(prompt)
 
@@ -70,7 +181,7 @@ class ContextCompressor:
         items: list[ContextItem],
         keep_last_rounds: int = 3,
     ) -> list[ContextItem]:
-        """Remove old tool-call rounds, keeping the most recent *keep_last_rounds*."""
+        """Remove old tool-call rounds, keeping the most recent ones."""
         rounds = self._identify_tool_rounds(items)
         if len(rounds) <= keep_last_rounds:
             return items
@@ -93,8 +204,28 @@ class ContextCompressor:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _jsonl_to_text(path: Path) -> str:
+        """Read a .jsonl file and convert to human-readable text."""
+        role_labels = {"user": "用户", "assistant": "助手", "tool": "工具", "system": "系统"}
+        lines: list[str] = []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw in f:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    item = json.loads(raw)
+                    role = item.get("role", "?")
+                    content = item.get("content", "")
+                    label = role_labels.get(role, role)
+                    if content:
+                        lines.append(f"{label}: {content}")
+        except Exception:
+            pass
+        return "\n".join(lines)
+
     def _find_split_point(self, items: list[ContextItem], keep_ratio: float) -> int:
-        """Walk backward and accumulate tokens until *keep_ratio* is reached."""
         total_tokens = self._estimator.estimate_items(items)
         preserve_tokens = int(total_tokens * keep_ratio)
 
@@ -107,12 +238,9 @@ class ContextCompressor:
 
     @staticmethod
     def _adjust_for_tool_calls(items: list[ContextItem], index: int) -> int:
-        """Ensure we don't split inside a tool_call <-> tool response pair."""
-        # If landing on a tool response, walk backward past the whole pair
         while index > 0 and items[index].role == "tool":
             index -= 1
 
-        # If now on an assistant with tool_calls, include all subsequent tool responses
         if (
             index < len(items)
             and items[index].role == "assistant"
@@ -132,7 +260,6 @@ class ContextCompressor:
 
     @staticmethod
     def _identify_tool_rounds(items: list[ContextItem]) -> list[list[int]]:
-        """Group indices into tool-call rounds (assistant + tool responses)."""
         rounds: list[list[int]] = []
         current: list[int] = []
 

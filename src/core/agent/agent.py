@@ -133,7 +133,10 @@ class Agent:
         async def summarize_fn(text: str) -> str:
             return await llm_low.simple_chat(
                 text,
-                system_prompt="你是一个对话摘要助手。请将给定的对话内容压缩为简洁的摘要。",
+                system_prompt=(
+                    "你是一个对话摘要助手。请将给定的对话内容压缩为结构化的摘要。"
+                    "保留关键决策、文件路径、技术选型和未完成的任务。"
+                ),
             )
 
         try:

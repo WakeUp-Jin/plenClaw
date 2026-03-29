@@ -1,8 +1,9 @@
 """Long-term memory context module.
 
-Bridges the ``LocalMemoryStore`` (local file-based persistent storage) into
-the context pipeline.  This module is read-only at the context level --
-writes go through the ``LocalMemoryStore`` / memory tools directly.
+Only loads ``user_instructions.md`` into the system prompt.  The other
+three files (user_profile, facts_and_decisions, topics_and_interests) are
+part of the Skill's progressive disclosure Layer 3 -- the Agent reads
+them on demand via the ReadFile tool based on the SKILL.md index.
 """
 
 from __future__ import annotations
@@ -17,32 +18,21 @@ if TYPE_CHECKING:
 
 
 class LongTermMemoryContext(BaseContext[str]):
-    """Injects long-term memory text into the LLM context."""
+    """Injects user_instructions.md into the LLM system prompt."""
 
     def __init__(self, memory_store: LocalMemoryStore) -> None:
         super().__init__()
         self._store = memory_store
 
-    def refresh(self) -> None:
-        """Reload memory text from the backing store into the item list."""
-        self.clear()
-        text = self._store.get_memory_text()
-        if text and text.strip():
-            self.add(text)
-
     def format(self) -> ContextParts:
-        all_text = self.get_all()
-        if not all_text:
-            text = self._store.get_memory_text()
-            if not text or not text.strip():
-                return ContextParts()
-        else:
-            text = "\n".join(all_text)
+        text = self._store.read_file("user_instructions")
+        if not text or not text.strip():
+            return ContextParts()
 
         return ContextParts(system_parts=[
             SystemPart(
-                tag="long_term_memory",
-                description="以下是你对用户的长期记忆，请基于这些信息个性化回复",
+                tag="user_instructions",
+                description="用户对你的明确指令和规则，必须严格遵守",
                 content=text,
             ),
         ])

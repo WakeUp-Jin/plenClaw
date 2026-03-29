@@ -200,8 +200,10 @@ class CompressionConfig:
     """
 
     context_window: int = 128000
-    compression_threshold: float = 0.8
+    compression_threshold: float = 0.85
     compress_keep_ratio: float = 0.3
+    initial_load_ratio: float = 0.60
+    days_per_week_summary: int = 7
 
     @property
     def trigger_tokens(self) -> int:
