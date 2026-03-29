@@ -1,0 +1,1311 @@
+<attached_files>
+
+<code_selection path="/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context/manager.py" lines="157-161">
+   157|        items.extend(self._system_prompt.format())
+   158|
+   159|        if self._long_term is not None:
+   160|            items.extend(self._long_term.format())
+   161|
+</code_selection>
+
+</attached_files>
+
+@manager.py (157-161) ，这里的上下文拼接是有点问题的，会有两个system，所以关于系统提示词这个消息角色的内容拼接，是需要好好设计设计，系统提示词动态添加，看看要如何设计吧
+
+---
+
+我觉得主要是概念混乱，内部的上下文数据结构和发送给LLM的message数组数据结构是混乱的，我觉得应该提供一个方法，最后传递给llm的时候组合成为message结构，例如：增加一个标签写到哪里，一个是写到system中，一个是写到message列表中，所以这个区分要有，所以我们继续讨论看看
+
+---
+
+细微调整一下，那个插入系统提示词的时候，有一点解释和说明这一块的内容是什么的，这个怎么设计呢？不然直接塞入system中，谁知道什么是什么
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/system%E6%B6%88%E6%81%AF%E5%90%88%E5%B9%B6%E8%AE%BE%E8%AE%A1_5afb42ee.plan.md" lines="1-341">
+     1|---
+     2|name: System消息合并设计
+     3|overview: 在模块级别区分"写入 system"和"写入 messages 列表"，用 ContextParts + SystemPart 实现。各模块 format() 返回 ContextParts，其中 system_parts 是带标签和描述的 SystemPart 列表，由 ContextManager 统一合并为一条带 XML 标签结构的 system message。
+     4|todos:
+     5|  - id: add-types
+     6|    content: 在 types.py 中新增 SystemPart（tag/description/content）和 ContextParts（system_parts/message_items）
+     7|    status: pending
+     8|  - id: update-base-context
+     9|    content: 修改 BaseContext.format() 返回值从 list[ContextItem] 改为 ContextParts
+    10|    status: pending
+    11|  - id: update-system-prompt
+    12|    content: 修改 SystemPromptContext.format()，内容放到 system_parts
+    13|    status: pending
+    14|  - id: update-long-term
+    15|    content: 修改 LongTermMemoryContext.format()，内容放到 system_parts
+    16|    status: pending
+    17|  - id: update-short-term
+    18|    content: 修改 ShortTermMemoryContext.format()，摘要放 system_parts，对话放 message_items
+    19|    status: pending
+    20|  - id: update-manager
+    21|    content: 重写 ContextManager 的组装逻辑，收集 SystemPart 合并为带 XML 标签的 system message
+    22|    status: pending
+    23|  - id: verify
+    24|    content: 检查 linter，确认 estimate_tokens 等间接依赖也兼容
+    25|    status: pending
+    26|isProject: false
+    27|---
+    28|
+    29|# System 消息投递目标设计（含 XML 标签标注）
+    30|
+    31|## 问题本质
+    32|
+    33|1. **内部数据结构和 LLM message 格式耦合**：各模块通过 `ContextItem(role="system")` 直接决定了 LLM message 的 role，导致多条 system message
+    34|2. **合并后内容没有标注**：如果只是简单拼接，模型不知道哪段是什么，调试时也看不懂
+    35|
+    36|## 核心设计
+    37|
+    38|### 新数据结构
+    39|
+    40|`**SystemPart`** —— 一段带身份标识的 system 内容：
+    41|
+    42|```python
+    43|@dataclass
+    44|class SystemPart:
+    45|    """一段 system 级内容，最终合并进唯一的 system message。
+    46|
+    47|    tag: XML 标签名，如 "long_term_memory"
+    48|    description: 对这段内容的说明文字，如 "以下是你对用户的长期记忆"
+    49|    content: 实际内容文本
+    50|    """
+    51|    tag: str
+    52|    description: str
+    53|    content: str
+    54|```
+    55|
+    56|`**ContextParts**` —— 模块 format() 的返回类型：
+    57|
+    58|```python
+    59|@dataclass
+    60|class ContextParts:
+    61|    """模块 format() 的返回类型，区分内容的投递目标。"""
+    62|    system_parts: list[SystemPart] = field(default_factory=list)
+    63|    message_items: list[ContextItem] = field(default_factory=list)
+    64|```
+    65|
+    66|### 合并后的 system message 效果
+    67|
+    68|ContextManager 将所有 SystemPart 合并为一条 system message，每段用 XML 标签包裹：
+    69|
+    70|```xml
+    71|<system_prompt>
+    72|你是 PineClaw，一个AI 助手。你可以帮助用户：
+    73|- 创建、读取、修改飞书文档
+    74|...
+    75|</system_prompt>
+    76|
+    77|<long_term_memory description="以下是你对用户的长期记忆，请基于这些信息个性化回复">
+    78|用户名：小明
+    79|偏好：中文回复
+    80|</long_term_memory>
+    81|
+    82|<conversation_summary description="以下是之前对话的压缩摘要">
+    83|用户讨论了飞书文档创建和多维表格的使用...
+    84|</conversation_summary>
+    85|```
+    86|
+    87|核心提示词（system_prompt）不需要 description（它本身就是指令），其他段落的 description 起到两个作用：
+    88|
+    89|1. 告诉模型这段内容是什么、怎么用
+    90|2. 方便开发者调试时快速定位
+    91|
+    92|### 各模块的投递策略
+    93|
+    94|
+    95|| 模块                          | tag                    | description                 | 投递目标          |
+    96|| --------------------------- | ---------------------- | --------------------------- | ------------- |
+    97|| SystemPromptContext         | `system_prompt`        | （空）                         | system_parts  |
+    98|| SystemPromptContext (skill) | `available_skills`     | "以下是可用的技能列表"                | system_parts  |
+    99|| LongTermMemoryContext       | `long_term_memory`     | "以下是你对用户的长期记忆，请基于这些信息个性化回复" | system_parts  |
+   100|| ShortTermMemory (摘要)        | `conversation_summary` | "以下是之前对话的压缩摘要"              | system_parts  |
+   101|| ShortTermMemory (对话)        | —                      | —                           | message_items |
+   102|
+   103|
+   104|---
+   105|
+   106|## 具体改动
+   107|
+   108|### 文件 1：[src/core/context/types.py](src/core/context/types.py)
+   109|
+   110|新增两个数据类（放在文件末尾，`CompressionResult` 之后）：
+   111|
+   112|```python
+   113|@dataclass
+   114|class SystemPart:
+   115|    """一段 system 级内容，最终合并进唯一的 system message。
+   116|
+   117|    tag: XML 标签名（如 "long_term_memory"），用于包裹内容
+   118|    description: 对这段内容的说明，会写入 XML 标签的 description 属性
+   119|    content: 实际内容文本
+   120|    """
+   121|    tag: str
+   122|    description: str
+   123|    content: str
+   124|
+   125|    def render(self) -> str:
+   126|        """渲染为带 XML 标签的文本段落。"""
+   127|        if self.description:
+   128|            return f'<{self.tag} description="{self.description}">\n{self.content}\n</{self.tag}>'
+   129|        return f"<{self.tag}>\n{self.content}\n</{self.tag}>"
+   130|
+   131|
+   132|@dataclass
+   133|class ContextParts:
+   134|    """模块 format() 的返回类型，区分内容的投递目标。
+   135|
+   136|    system_parts: 带标签的文本段落，最终合并进唯一的 system message。
+   137|    message_items: ContextItem 列表，作为独立 message 放入对话列表。
+   138|    """
+   139|    system_parts: list[SystemPart] = field(default_factory=list)
+   140|    message_items: list[ContextItem] = field(default_factory=list)
+   141|```
+   142|
+   143|`render()` 方法封装了 XML 标签的渲染逻辑——如果有 description 就加 description 属性，没有就只用标签名包裹。这样渲染逻辑和数据结构在一起，不散落到 manager 中。
+   144|
+   145|### 文件 2：[src/core/context/base.py](src/core/context/base.py)
+   146|
+   147|```python
+   148|from core.context.types import ContextItem, ContextParts  # 新增 ContextParts
+   149|
+   150|class BaseContext(ABC, Generic[T]):
+   151|    # ... 其他方法不变 ...
+   152|
+   153|    @abstractmethod
+   154|    def format(self) -> ContextParts:  # 返回值改为 ContextParts
+   155|        """子类返回 ContextParts，声明内容投递到 system 还是 messages。"""
+   156|        ...
+   157|```
+   158|
+   159|### 文件 3：[src/core/context/modules/system_prompt.py](src/core/context/modules/system_prompt.py)
+   160|
+   161|```python
+   162|from core.context.types import ContextItem, MessagePriority, PromptSegment, ContextParts, SystemPart
+   163|
+   164|def format(self) -> ContextParts:
+   165|    prompt = self.get_prompt()
+   166|    if not prompt:
+   167|        return ContextParts()
+   168|    return ContextParts(system_parts=[
+   169|        SystemPart(tag="system_prompt", description="", content=prompt),
+   170|    ])
+   171|```
+   172|
+   173|不再创建 `ContextItem(role="system")`，核心提示词没有 description（它本身就是指令，不需要额外解释）。
+   174|
+   175|### 文件 4：[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)
+   176|
+   177|```python
+   178|from core.context.types import ContextItem, MessagePriority, ContextParts, SystemPart
+   179|
+   180|def format(self) -> ContextParts:
+   181|    all_text = self.get_all()
+   182|    if not all_text:
+   183|        text = self._store.get_memory_text()
+   184|        if not text or not text.strip():
+   185|            return ContextParts()
+   186|    else:
+   187|        text = "\n".join(all_text)
+   188|
+   189|    return ContextParts(system_parts=[
+   190|        SystemPart(
+   191|            tag="long_term_memory",
+   192|            description="以下是你对用户的长期记忆，请基于这些信息个性化回复",
+   193|            content=text,
+   194|        ),
+   195|    ])
+   196|```
+   197|
+   198|注意：description 现在承担了原来 `MEMORY_PREAMBLE` 的职责，那个常量可以移除。
+   199|
+   200|### 文件 5：[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)
+   201|
+   202|```python
+   203|from core.context.types import ContextItem, CompressionResult, MessagePriority, ContextParts, SystemPart
+   204|
+   205|def format(self) -> ContextParts:
+   206|    parts = ContextParts()
+   207|
+   208|    if self._summary:
+   209|        parts.system_parts.append(SystemPart(
+   210|            tag="conversation_summary",
+   211|            description="以下是之前对话的压缩摘要",
+   212|            content=self._summary,
+   213|        ))
+   214|
+   215|    parts.message_items.extend(self._items)
+   216|    return parts
+   217|```
+   218|
+   219|### 文件 6：[src/core/context/manager.py](src/core/context/manager.py)
+   220|
+   221|核心组装逻辑重写：
+   222|
+   223|```python
+   224|from core.context.types import ContextItem, CompressionConfig, MessagePriority, PromptSegment, ContextParts, SystemPart
+   225|
+   226|SYSTEM_PART_SEPARATOR = "\n\n"
+   227|
+   228|def get_context(self) -> list[dict[str, Any]]:
+   229|    """组装最终的 LLM message 数组。"""
+   230|    system_parts, message_items = self._collect_parts()
+   231|    messages: list[dict[str, Any]] = []
+   232|
+   233|    if system_parts:
+   234|        rendered = SYSTEM_PART_SEPARATOR.join(
+   235|            part.render() for part in system_parts if part.content.strip()
+   236|        )
+   237|        messages.append({"role": "system", "content": rendered})
+   238|
+   239|    messages.extend(item.to_message() for item in message_items)
+   240|    return self._sanitize(messages)
+   241|
+   242|
+   243|def _collect_parts(self) -> tuple[list[SystemPart], list[ContextItem]]:
+   244|    """从各模块收集 system_parts 和 message_items。"""
+   245|    all_system: list[SystemPart] = []
+   246|    all_messages: list[ContextItem] = []
+   247|
+   248|    for parts in [
+   249|        self._system_prompt.format(),
+   250|        self._long_term.format() if self._long_term else ContextParts(),
+   251|        self._short_term.format(),
+   252|    ]:
+   253|        all_system.extend(parts.system_parts)
+   254|        all_messages.extend(parts.message_items)
+   255|
+   256|    return all_system, all_messages
+   257|
+   258|
+   259|def _build_context_items(self) -> list[ContextItem]:
+   260|    """返回 ContextItem 列表（用于 token 估算）。"""
+   261|    system_parts, message_items = self._collect_parts()
+   262|    items: list[ContextItem] = []
+   263|    if system_parts:
+   264|        rendered = SYSTEM_PART_SEPARATOR.join(
+   265|            part.render() for part in system_parts if part.content.strip()
+   266|        )
+   267|        items.append(ContextItem(
+   268|            role="system",
+   269|            content=rendered,
+   270|            source="merged_system",
+   271|            priority=MessagePriority.CRITICAL,
+   272|        ))
+   273|    items.extend(message_items)
+   274|    return items
+   275|```
+   276|
+   277|同时 `init_skills()` 也需要适配——现在 Skill 目录通过 `register_segment` 注入系统提示词，`SystemPromptContext` 的 segment 机制保持不变，它会在 `get_prompt()` 中把所有 segment 合并为一段文本，作为 `system_prompt` 这个 SystemPart 的 content。所以 `init_skills()` **不需要改动**。
+   278|
+   279|### 删除旧方法
+   280|
+   281|`_to_messages()` 方法不再需要（其逻辑已融入 `get_context()`），可以删除。
+   282|
+   283|---
+   284|
+   285|## 数据流总览
+   286|
+   287|```
+   288|各模块 format()                        ContextManager
+   289|┌────────────────────┐
+   290|│ SystemPromptContext │─→ ContextParts
+   291|│   system_parts:    │     SystemPart(tag="system_prompt", desc="", content="你是PineClaw...")
+   292|│   message_items:   │     (空)
+   293|└────────────────────┘
+   294|┌────────────────────┐
+   295|│ LongTermMemory     │─→ ContextParts
+   296|│   system_parts:    │     SystemPart(tag="long_term_memory", desc="以下是...", content="用户偏好...")
+   297|│   message_items:   │     (空)
+   298|└────────────────────┘                  _collect_parts()
+   299|┌────────────────────┐                  ┌──────────────────────────┐
+   300|│ ShortTermMemory    │─→ ContextParts ─→│ all_system_parts:        │
+   301|│   system_parts:    │     SystemPart   │   [SP1, SP2, SP3]       │
+   302|│   message_items:   │     [item, ...]  │ all_message_items:       │
+   303|└────────────────────┘                  │   [user, asst, tool, ...] │
+   304|                                        └────────────┬─────────────┘
+   305|                                                     │ get_context()
+   306|                                                     ▼
+   307|                                        ┌──────────────────────────┐
+   308|                                        │ messages = [             │
+   309|                                        │   {role: "system",       │
+   310|                                        │    content:              │
+   311|                                        │      "<system_prompt>    │
+   312|                                        │       ...                │
+   313|                                        │      </system_prompt>    │
+   314|                                        │                          │
+   315|                                        │      <long_term_memory>  │
+   316|                                        │       ...                │
+   317|                                        │      </long_term_memory> │
+   318|                                        │                          │
+   319|                                        │      <conversation_...>  │
+   320|                                        │       ...                │
+   321|                                        │      </conversation_...>"|
+   322|                                        │   },                     │
+   323|                                        │   {role: "user", ...},   │
+   324|                                        │   {role: "assistant",...},│
+   325|                                        │   ...                    │
+   326|                                        │ ]                        │
+   327|                                        └──────────────────────────┘
+   328|                                                     │
+   329|                                                     ▼ LLM API
+   330|```
+   331|
+   332|## 涉及文件清单
+   333|
+   334|- [src/core/context/types.py](src/core/context/types.py) — 新增 SystemPart + ContextParts
+   335|- [src/core/context/base.py](src/core/context/base.py) — format() 返回值改为 ContextParts
+   336|- [src/core/context/modules/system_prompt.py](src/core/context/modules/system_prompt.py) — format() 适配
+   337|- [src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py) — format() 适配，移除 MEMORY_PREAMBLE
+   338|- [src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py) — format() 适配
+   339|- [src/core/context/manager.py](src/core/context/manager.py) — 重写组装逻辑，删除 _to_messages()
+   340|
+   341|
+</code_selection>
+
+</attached_files>
+
+System 消息投递目标设计（含 XML 标签标注）
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+def _build_context_items(self) -> list[ContextItem]:
+    """返回 ContextItem 列表（用于 token 估算）。"""
+    system_parts, message_items = self._collect_parts()
+    items: list[ContextItem] = []
+    if system_parts:
+        rendered = SYSTEM_PART_SEPARATOR.join(
+            part.render() for part in system_parts if part.content.strip()
+        )
+        items.append(ContextItem(
+            role="system",
+            content=rendered,
+            source="merged_system",
+            priority=MessagePriority.CRITICAL,
+        ))
+    items.extend(message_items)
+    return items
+
+这个代码是什么意思，不是没有估算啦吗？Token的计费都是从接口的返回准确的Token*价格得来的
+
+---
+
+<external_links>
+### Potentially Relevant Websearch Results
+
+You should respond as if these information are known to you. Refrain from saying "I am unable to browse the internet" or "I don't have access to the internet" or "I'm unable to provide real-time news updates". This is your internet search results. Please always cite any links you referenced from the above search results in your response in markdown format.
+
+-------
+Website URL: https://agentskills.io/specification
+Website Title: Specification
+Website Content:
+> ## Documentation Index
+> Fetch the complete documentation index at: https://agentskills.io/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Specification
+
+> The complete format specification for Agent Skills.
+
+## Directory structure
+
+A skill is a directory containing, at minimum, a `SKILL.md` file:
+
+```
+skill-name/
+├── SKILL.md          # Required: metadata + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: documentation
+├── assets/           # Optional: templates, resources
+└── ...               # Any additional files or directories
+```
+
+## `SKILL.md` format
+
+The `SKILL.md` file must contain YAML frontmatter followed by Markdown content.
+
+### Frontmatter
+
+| Field           | Required | Constraints                                                                                                       |
+| --------------- | -------- | ----------------------------------------------------------------------------------------------------------------- |
+| `name`          | Yes      | Max 64 characters. Lowercase letters, numbers, and hyphens only. Must not start or end with a hyphen.             |
+| `description`   | Yes      | Max 1024 characters. Non-empty. Describes what the skill does and when to use it.                                 |
+| `license`       | No       | License name or reference to a bundled license file.                                                              |
+| `compatibility` | No       | Max 500 characters. Indicates environment requirements (intended product, system packages, network access, etc.). |
+| `metadata`      | No       | Arbitrary key-value mapping for additional metadata.                                                              |
+| `allowed-tools` | No       | Space-delimited list of pre-approved tools the skill may use. (Experimental)                                      |
+
+<Card>
+  **Minimal example:**
+
+  ```markdown SKILL.md theme={null}
+  ---
+  name: skill-name
+  description: A description of what this skill does and when to use it.
+  ---
+  ```
+
+  **Example with optional fields:**
+
+  ```markdown SKILL.md theme={null}
+  ---
+  name: pdf-processing
+  description: Extract PDF text, fill forms, merge files. Use when handling PDFs.
+  license: Apache-2.0
+  metadata:
+    author: example-org
+    version: "1.0"
+  ---
+  ```
+</Card>
+
+#### `name` field
+
+The required `name` field:
+
+* Must be 1-64 characters
+* May only contain unicode lowercase alphanumeric characters (`a-z`) and hyphens (`-`)
+* Must not start or end with a hyphen (`-`)
+* Must not contain consecutive hyphens (`--`)
+* Must match the parent directory name
+
+<Card>
+  **Valid examples:**
+
+  ```yaml  theme={null}
+  name: pdf-processing
+  ```
+
+  ```yaml  theme={null}
+  name: data-analysis
+  ```
+
+  ```yaml  theme={null}
+  name: code-review
+  ```
+
+  **Invalid examples:**
+
+  ```yaml  theme={null}
+  name: PDF-Processing  # uppercase not allowed
+  ```
+
+  ```yaml  theme={null}
+  name: -pdf  # cannot start with hyphen
+  ```
+
+  ```yaml  theme={null}
+  name: pdf--processing  # consecutive hyphens not allowed
+  ```
+</Card>
+
+#### `description` field
+
+The required `description` field:
+
+* Must be 1-1024 characters
+* Should describe both what the skill does and when to use it
+* Should include specific keywords that help agents identify relevant tasks
+
+<Card>
+  **Good example:**
+
+  ```yaml  theme={null}
+  description: Extracts text and tables from PDF files, fills PDF forms, and merges multiple PDFs. Use when working with PDF documents or when the user mentions PDFs, forms, or document extraction.
+  ```
+
+  **Poor example:**
+
+  ```yaml  theme={null}
+  description: Helps with PDFs.
+  ```
+</Card>
+
+#### `license` field
+
+The optional `license` field:
+
+* Specifies the license applied to the skill
+* We recommend keeping it short (either the name of a license or the name of a bundled license file)
+
+<Card>
+  **Example:**
+
+  ```yaml  theme={null}
+  license: Proprietary. LICENSE.txt has complete terms
+  ```
+</Card>
+
+#### `compatibility` field
+
+The optional `compatibility` field:
+
+* Must be 1-500 characters if provided
+* Should only be included if your skill has specific environment requirements
+* Can indicate intended product, required system packages, network access needs, etc.
+
+<Card>
+  **Examples:**
+
+  ```yaml  theme={null}
+  compatibility: Designed for Claude Code (or similar products)
+  ```
+
+  ```yaml  theme={null}
+  compatibility: Requires git, docker, jq, and access to the internet
+  ```
+
+  ```yaml  theme={null}
+  compatibility: Requires Python 3.14+ and uv
+  ```
+</Card>
+
+<Note>
+  Most skills do not need the `compatibility` field.
+</Note>
+
+#### `metadata` field
+
+The optional `metadata` field:
+
+* A map from string keys to string values
+* Clients can use this to store additional properties not defined by the Agent Skills spec
+* We recommend making your key names reasonably unique to avoid accidental conflicts
+
+<Card>
+  **Example:**
+
+  ```yaml  theme={null}
+  metadata:
+    author: example-org
+    version: "1.0"
+  ```
+</Card>
+
+#### `allowed-tools` field
+
+The optional `allowed-tools` field:
+
+* A space-delimited list of tools that are pre-approved to run
+* Experimental. Support for this field may vary between agent implementations
+
+<Card>
+  **Example:**
+
+  ```yaml  theme={null}
+  allowed-tools: Bash(git:*) Bash(jq:*) Read
+  ```
+</Card>
+
+### Body content
+
+The Markdown body after the frontmatter contains the skill instructions. There are no format restrictions. Write whatever helps agents perform the task effectively.
+
+Recommended sections:
+
+* Step-by-step instructions
+* Examples of inputs and outputs
+* Common edge cases
+
+Note that the agent will load this entire file once it's decided to activate a skill. Consider splitting longer `SKILL.md` content into referenced files.
+
+## Optional directories
+
+### `scripts/`
+
+Contains executable code that agents can run. Scripts should:
+
+* Be self-contained or clearly document dependencies
+* Include helpful error messages
+* Handle edge cases gracefully
+
+Supported languages depend on the agent implementation. Common options include Python, Bash, and JavaScript.
+
+### `references/`
+
+Contains additional documentation that agents can read when needed:
+
+* `REFERENCE.md` - Detailed technical reference
+* `FORMS.md` - Form templates or structured data formats
+* Domain-specific files (`finance.md`, `legal.md`, etc.)
+
+Keep individual [reference files](#file-references) focused. Agents load these on demand, so smaller files mean less use of context.
+
+### `assets/`
+
+Contains static resources:
+
+* Templates (document templates, configuration templates)
+* Images (diagrams, examples)
+* Data files (lookup tables, schemas)
+
+## Progressive disclosure
+
+Skills should be structured for efficient use of context:
+
+1. **Metadata** (\~100 tokens): The `name` and `description` fields are loaded at startup for all skills
+2. **Instructions** (\< 5000 tokens recommended): The full `SKILL.md` body is loaded when the skill is activated
+3. **Resources** (as needed): Files (e.g. those in `scripts/`, `references/`, or `assets/`) are loaded only when required
+
+Keep your main `SKILL.md` under 500 lines. Move detailed reference material to separate files.
+
+## File references
+
+When referencing other files in your skill, use relative paths from the skill root:
+
+```markdown SKILL.md theme={null}
+See [the reference guide](references/REFERENCE.md) for details.
+
+Run the extraction script:
+scripts/extract.py
+```
+
+Keep file references one level deep from `SKILL.md`. Avoid deeply nested reference chains.
+
+## Validation
+
+Use the [skills-ref](https://github.com/agentskills/agentskills/tree/main/skills-ref) reference library to validate your skills:
+
+```bash  theme={null}
+skills-ref validate ./my-skill
+```
+
+This checks that your `SKILL.md` frontmatter is valid and follows all naming conventions.
+
+Built with [Mintlify](https://mintlify.com).
+____
+
+Website URL: https://agentskills.io/skill-creation/best-practices
+Website Title: Best practices for skill creators
+Website Content:
+> ## Documentation Index
+> Fetch the complete documentation index at: https://agentskills.io/llms.txt
+> Use this file to discover all available pages before exploring further.
+
+# Best practices for skill creators
+
+> How to write skills that are well-scoped and calibrated to the task.
+
+## Start from real expertise
+
+A common pitfall in skill creation is asking an LLM to generate a skill without providing domain-specific context — relying solely on the LLM's general training knowledge. The result is vague, generic procedures ("handle errors appropriately," "follow best practices for authentication") rather than the specific API patterns, edge cases, and project conventions that make a skill valuable.
+
+Effective skills are grounded in real expertise. The key is feeding domain-specific context into the creation process.
+
+### Extract from a hands-on task
+
+Complete a real task in conversation with an agent, providing context, corrections, and preferences along the way. Then extract the reusable pattern into a skill. Pay attention to:
+
+* **Steps that worked** — the sequence of actions that led to success
+* **Corrections you made** — places where you steered the agent's approach (e.g., "use library X instead of Y," "check for edge case Z")
+* **Input/output formats** — what the data looked like going in and coming out
+* **Context you provided** — project-specific facts, conventions, or constraints the agent didn't already know
+
+### Synthesize from existing project artifacts
+
+When you have a body of existing knowledge, you can feed it into an LLM and ask it to synthesize a skill. A data-pipeline skill synthesized from your team's actual incident reports and runbooks will outperform one synthesized from a generic "data engineering best practices" article, because it captures *your* schemas, failure modes, and recovery procedures. The key is project-specific material, not generic references.
+
+Good source material includes:
+
+* Internal documentation, runbooks, and style guides
+* API specifications, schemas, and configuration files
+* Code review comments and issue trackers (captures recurring concerns and reviewer expectations)
+* Version control history, especially patches and fixes (reveals patterns through what actually changed)
+* Real-world failure cases and their resolutions
+
+## Refine with real execution
+
+The first draft of a skill usually needs refinement. Run the skill against real tasks, then feed the results — all of them, not just failures — back into the creation process. Ask: what triggered false positives? What was missed? What could be cut?
+
+Even a single pass of execute-then-revise noticeably improves quality, and complex domains often benefit from several.
+
+<Tip>
+  Read agent execution traces, not just final outputs. If the agent wastes time on unproductive steps, common causes include instructions that are too vague (the agent tries several approaches before finding one that works), instructions that don't apply to the current task (the agent follows them anyway), or too many options presented without a clear default.
+</Tip>
+
+For a more structured approach to iteration, including test cases, assertions, and grading, see [Evaluating skill output quality](/skill-creation/evaluating-skills).
+
+## Spending context wisely
+
+Once a skill activates, its full `SKILL.md` body loads into the agent's context window alongside conversation history, system context, and other active skills. Every token in your skill competes for the agent's attention with everything else in that window.
+
+### Add what the agent lacks, omit what it knows
+
+Focus on what the agent *wouldn't* know without your skill: project-specific conventions, domain-specific procedures, non-obvious edge cases, and the particular tools or APIs to use. You don't need to explain what a PDF is, how HTTP works, or what a database migration does.
+
+````markdown  theme={null}
+<!-- Too verbose — the agent already knows what PDFs are -->
+## Extract PDF text
+
+PDF (Portable Document Format) files are a common file format that contains
+text, images, and other content. To extract text from a PDF, you'll need to
+use a library. pdfplumber is recommended because it handles most cases well.
+
+<!-- Better — jumps straight to what the agent wouldn't know on its own -->
+## Extract PDF text
+
+Use pdfplumber for text extraction. For scanned documents, fall back to
+pdf2image with pytesseract.
+
+```python
+import pdfplumber
+
+with pdfplumber.open("file.pdf") as pdf:
+    text = pdf.pages[0].extract_text()
+```
+````
+
+Ask yourself about each piece of content: "Would the agent get this wrong without this instruction?" If the answer is no, cut it. If you're unsure, test it. And if the agent already handles the entire task well without the skill, the skill may not be adding value. See [Evaluating skill output quality](/skill-creation/evaluating-skills) for how to test this systematically.
+
+### Design coherent units
+
+Deciding what a skill should cover is like deciding what a function should do: you want it to encapsulate a coherent unit of work that composes well with other skills. Skills scoped too narrowly force multiple skills to load for a single task, risking overhead and conflicting instructions. Skills scoped too broadly become hard to activate precisely. A skill for querying a database and formatting the results may be one coherent unit, while a skill that also covers database administration is probably trying to do too much.
+
+### Aim for moderate detail
+
+Overly comprehensive skills can hurt more than they help — the agent struggles to extract what's relevant and may pursue unproductive paths triggered by instructions that don't apply to the current task. Concise, stepwise guidance with a working example tends to outperform exhaustive documentation. When you find yourself covering every edge case, consider whether most are better handled by the agent's own judgment.
+
+### Structure large skills with progressive disclosure
+
+The [specification](/specification#progressive-disclosure) recommends keeping `SKILL.md` under 500 lines and 5,000 tokens — just the core instructions the agent needs on every run. When a skill legitimately needs more content, move detailed reference material to separate files in `references/` or similar directories.
+
+The key is telling the agent *when* to load each file. "Read `references/api-errors.md` if the API returns a non-200 status code" is more useful than a generic "see references/ for details." This lets the agent load context on demand rather than up front, which is how [progressive disclosure](/what-are-skills#how-skills-work) is designed to work.
+
+## Calibrating control
+
+Not every part of a skill needs the same level of prescriptiveness. Match the specificity of your instructions to the fragility of the task.
+
+### Match specificity to fragility
+
+**Give the agent freedom** when multiple approaches are valid and the task tolerates variation. For flexible instructions, explaining *why* can be more effective than rigid directives — an agent that understands the purpose behind an instruction makes better context-dependent decisions. A code review skill can describe what to look for without prescribing exact steps:
+
+```markdown  theme={null}
+## Code review process
+
+1. Check all database queries for SQL injection (use parameterized queries)
+2. Verify authentication checks on every endpoint
+3. Look for race conditions in concurrent code paths
+4. Confirm error messages don't leak internal details
+```
+
+**Be prescriptive** when operations are fragile, consistency matters, or a specific sequence must be followed:
+
+````markdown  theme={null}
+## Database migration
+
+Run exactly this sequence:
+
+```bash
+python scripts/migrate.py --verify --backup
+```
+
+Do not modify the command or add additional flags.
+````
+
+Most skills have a mix. Calibrate each part independently.
+
+### Provide defaults, not menus
+
+When multiple tools or approaches could work, pick a default and mention alternatives briefly rather than presenting them as equal options.
+
+````markdown  theme={null}
+<!-- Too many options -->
+You can use pypdf, pdfplumber, PyMuPDF, or pdf2image...
+
+<!-- Clear default with escape hatch -->
+Use pdfplumber for text extraction:
+
+```python
+import pdfplumber
+```
+
+For scanned PDFs requiring OCR, use pdf2image with pytesseract instead.
+````
+
+### Favor procedures over declarations
+
+A skill should teach the agent *how to approach* a class of problems, not *what to produce* for a specific instance. Compare:
+
+```markdown  theme={null}
+<!-- Specific answer — only useful for this exact task -->
+Join the `orders` table to `customers` on `customer_id`, filter where
+`region = 'EMEA'`, and sum the `amount` column.
+
+<!-- Reusable method — works for any analytical query -->
+1. Read the schema from `references/schema.yaml` to find relevant tables
+2. Join tables using the `_id` foreign key convention
+3. Apply any filters from the user's request as WHERE clauses
+4. Aggregate numeric columns as needed and format as a markdown table
+```
+
+This doesn't mean skills can't include specific details — output format templates (see [Templates for output format](#templates-for-output-format)), constraints like "never output PII," and tool-specific instructions are all valuable. The point is that the *approach* should generalize even when individual details are specific.
+
+## Patterns for effective instructions
+
+These are reusable techniques for structuring skill content. Not every skill needs all of them — use the ones that fit your task.
+
+### Gotchas sections
+
+The highest-value content in many skills is a list of gotchas — environment-specific facts that defy reasonable assumptions. These aren't general advice ("handle errors appropriately") but concrete corrections to mistakes the agent will make without being told otherwise:
+
+```markdown  theme={null}
+## Gotchas
+
+- The `users` table uses soft deletes. Queries must include
+  `WHERE deleted_at IS NULL` or results will include deactivated accounts.
+- The user ID is `user_id` in the database, `uid` in the auth service,
+  and `accountId` in the billing API. All three refer to the same value.
+- The `/health` endpoint returns 200 as long as the web server is running,
+  even if the database connection is down. Use `/ready` to check full
+  service health.
+```
+
+Keep gotchas in `SKILL.md` where the agent reads them before encountering the situation. A separate reference file works if you tell the agent when to load it, but for non-obvious issues, the agent may not recognize the trigger.
+
+<Tip>
+  When an agent makes a mistake you have to correct, add the correction to the gotchas section. This is one of the most direct ways to improve a skill iteratively (see [Refine with real execution](#refine-with-real-execution)).
+</Tip>
+
+### Templates for output format
+
+When you need the agent to produce output in a specific format, provide a template. This is more reliable than describing the format in prose, because agents pattern-match well against concrete structures. Short templates can live inline in `SKILL.md`; for longer templates, or templates only needed in certain cases, store them in `assets/` and reference them from `SKILL.md` so they only load when needed.
+
+````markdown  theme={null}
+## Report structure
+
+Use this template, adapting sections as needed for the specific analysis:
+
+```markdown
+# [Analysis Title]
+
+## Executive summary
+[One-paragraph overview of key findings]
+
+## Key findings
+- Finding 1 with supporting data
+- Finding 2 with supporting data
+
+## Recommendations
+1. Specific actionable recommendation
+2. Specific actionable recommendation
+```
+````
+
+### Checklists for multi-step workflows
+
+An explicit checklist helps the agent track progress and avoid skipping steps, especially when steps have dependencies or validation gates.
+
+```markdown  theme={null}
+## Form processing workflow
+
+Progress:
+- [ ] Step 1: Analyze the form (run `scripts/analyze_form.py`)
+- [ ] Step 2: Create field mapping (edit `fields.json`)
+- [ ] Step 3: Validate mapping (run `scripts/validate_fields.py`)
+- [ ] Step 4: Fill the form (run `scripts/fill_form.py`)
+- [ ] Step 5: Verify output (run `scripts/verify_output.py`)
+```
+
+### Validation loops
+
+Instruct the agent to validate its own work before moving on. The pattern is: do the work, run a validator (a script, a reference checklist, or a self-check), fix any issues, and repeat until validation passes.
+
+```markdown  theme={null}
+## Editing workflow
+
+1. Make your edits
+2. Run validation: `python scripts/validate.py output/`
+3. If validation fails:
+   - Review the error message
+   - Fix the issues
+   - Run validation again
+4. Only proceed when validation passes
+```
+
+A reference document can also serve as the "validator" — instruct the agent to check its work against the reference before finalizing.
+
+### Plan-validate-execute
+
+For batch or destructive operations, have the agent create an intermediate plan in a structured format, validate it against a source of truth, and only then execute.
+
+```markdown  theme={null}
+## PDF form filling
+
+1. Extract form fields: `python scripts/analyze_form.py input.pdf` → `form_fields.json`
+   (lists every field name, type, and whether it's required)
+2. Create `field_values.json` mapping each field name to its intended value
+3. Validate: `python scripts/validate_fields.py form_fields.json field_values.json`
+   (checks that every field name exists in the form, types are compatible, and
+   required fields aren't missing)
+4. If validation fails, revise `field_values.json` and re-validate
+5. Fill the form: `python scripts/fill_form.py input.pdf field_values.json output.pdf`
+```
+
+The key ingredient is step 3: a validation script that checks the plan (`field_values.json`) against the source of truth (`form_fields.json`). Errors like "Field 'signature\_date' not found — available fields: customer\_name, order\_total, signature\_date\_signed" give the agent enough information to self-correct.
+
+### Bundling reusable scripts
+
+When [iterating on a skill](/skill-creation/evaluating-skills), compare the agent's execution traces across test cases. If you notice the agent independently reinventing the same logic each run — building charts, parsing a specific format, validating output — that's a signal to write a tested script once and bundle it in `scripts/`.
+
+For more on designing and bundling scripts, see [Using scripts in skills](/skill-creation/using-scripts).
+
+## Next steps
+
+Once you have a working skill, two guides can help you refine it further:
+
+* **[Evaluating skill output quality](/skill-creation/evaluating-skills)** — Set up test cases, grade results, and iterate systematically.
+* **[Optimizing skill descriptions](/skill-creation/optimizing-descriptions)** — Test and improve your skill's `description` field so it triggers on the right prompts.
+
+Built with [Mintlify](https://mintlify.com).
+____
+
+</external_links>
+
+关于上下文管理模块的实现，根据上面的聊天记录有一点小调整，第一个是上下文模块要自己定义系统流转的上下文状态数据结构，而不是使用message，这里提供一个转换函数就可以
+
+第二个就是：在概念上面和实现上面分开，概念可以设计多种上下文管理模块，但是最后拼接到message中去的，目前只有两种，一个是sysytem，一个是直接加入message种去
+
+我最近在总结上下文工程实践指南的Skill，所以根据这个概念对于里面的上下文管理模块做一些修改和补充吧，遵守skill的规范，/Users/xjk/Desktop/ScriptCode/context-engineering-skill/skills/ce-context-management
+
+Skill的规范：https://agentskills.io/specification https://agentskills.io/skill-creation/best-practices
+
+---
+
+<git_status>
+This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.
+
+Git repo: /Users/xjk/Desktop/ScriptCode/PineClaw
+
+M src/core/agent/agent.py
+ M src/core/context/manager.py
+</git_status>
+
+<agent_transcripts>
+Agent transcripts (past chats) live in /Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/agent-transcripts. They have names like <uuid>.jsonl, cite them to the user as [<title for chat <=6 words>](<uuid excluding .jsonl>). NEVER cite subagent transcripts/IDs; you can only cite parent uuids. Don't discuss the folder structure.
+</agent_transcripts>
+
+<agent_skills>
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge. To use a skill, read the skill file at the provided absolute path using the Read tool, then follow the instructions within. When a skill is relevant, read and follow it IMMEDIATELY as your first action. NEVER just announce or mention a skill without actually reading and following it. Only use skills listed below.
+
+<available_skills description="Skills the agent can use. Use the Read tool with the provided absolute path to fetch full contents.">
+<agent_skill fullPath="/Users/xjk/.cursor/skills/find-skills/SKILL.md">Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-agent-patterns/SKILL.md">Agent 形态模块 - 决定如何使用上下文和 LLM 来解决用户问题的执行器设计。
+包含单智能体设计（Agent类/生命周期/工具过滤/AgentConfig/四种预设）、
+多智能体设计（AgentManager/监督者/群体/层级模式/子代理规模控制）、
+执行引擎详解（ExecutionEngine主循环/工具调度/溢出控制/流式输出/中断处理）、
+协同与自主Agent交互形态（场域理论/双向信息流/意图上下文vs状态上下文）。
+当用户需要构建单智能体、设计多智能体协作、实现执行引擎、
+或理解协同Agent与自主Agent的区别时使用此 Skill。
+即使用户没有明确提到"Agent形态"，只要涉及 Agent 类设计、工具循环实现、
+主代理与子代理协作、Agent 预设配置、执行引擎的 while 循环、
+maxLoops 控制、AbortController 中断、或者 Agent 如何调度工具等话题，
+也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-context-management/SKILL.md">Agent 上下文管理模块 - Agent 的核心，负责编排上下文输入给 LLM。
+包含上下文架构（BaseContext基类/ContextManager/消息组装顺序）、
+各上下文类详解（SystemPromptContext/HistoryContext含LLM压缩/CurrentTurnContext）、
+上下文压缩机制（ClaudeCode 9段式/Gemini 5点/工具消息裁剪/消息移除）、
+Token压缩策略（TokenEstimator/三种策略/消息优先级/自适应选择）、
+上下文问题与解决（污染/干扰/冲突/混淆四大问题）、
+消息清理与验证（sanitizeMessages/validateMessages/tool_calls配对）。
+当用户需要设计上下文架构、实现压缩策略、管理Token预算、
+解决上下文问题、或实现消息清理验证时使用此 Skill。
+即使用户没有明确提到"上下文管理"，只要涉及消息序列组装、对话历史压缩、
+token 预算控制、LLM 输入编排、system prompt 设计、conversation history 管理、
+tool_calls 与 tool 响应的配对验证、或者 Agent 对话变长后响应质量下降等问题，
+也应主动使用此 Skill。更长的上下文不等于更好的响应，设计重点不在"获取"而在"整理"。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-evaluation/SKILL.md">Agent 评估模块 - 使提示词设计从"艺术"走向"工程"。
+包含评估方法论（代码评分/人工评分/模型评分/80-20数据集划分/pass@k与pass^k）、
+评估器实现（EventBus事件总线/TestCase结构/评估函数/Agent埋点/格式化输出）、
+不同类型Agent评估（编码Agent/对话Agent/研究Agent/计算机使用Agent的评估维度和策略）。
+当用户需要设计Agent评估方案、实现评估器、建立测试用例、
+或针对特定类型Agent制定评估策略时使用此 Skill。
+即使用户没有明确提到"评估"，只要涉及 Agent 质量度量、prompt 优化效果验证、
+Agent 稳定性测试、pass@k/pass^k 指标计算、AB 测试提示词、
+或者想知道如何科学地迭代改进 Agent 等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-llm-module/SKILL.md">Agent LLM 模块 - 通过统一接口和工厂模式对接多种模型供应商。
+包含 ILLMService 统一接口（complete/simpleChat/generate）、
+工厂模式与服务注册表（createLLMService/LLMServiceRegistry/ModelTier分层缓存）、
+多供应商适配（消息格式转换/工具格式转换/流式输出/重试与退避策略）。
+支持 DeepSeek、OpenRouter、OpenAI、Anthropic 等供应商的差异适配。
+当用户需要设计统一 LLM 接口、实现工厂模式、适配多供应商、
+处理流式输出、实现重试机制时使用此 Skill。
+即使用户没有明确提到"LLM模块"，只要涉及调用大模型 API、封装 OpenAI/Anthropic/DeepSeek 接口、
+处理 chat completions 返回值、实现流式输出、tool_calls 解析、多模型切换、
+或者模型调用失败重试等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-overview/SKILL.md">上下文工程架构总览 - 基于上下文工程构建 Agent 后端的整体设计方法论。
+涵盖四大核心模块（工具管理、上下文管理、LLM模块、Agent形态）的协作关系、
+执行循环、推荐目录结构与渐进式增长路径。
+当用户需要从零开始搭建 Agent 后端、理解 Agent 各模块如何协作、
+选择项目结构、或进行整体架构设计时使用此 Skill。
+即使用户没有明确提到"上下文工程"或"架构总览"，只要涉及 Agent 后端开发、
+AI 应用架构设计、LLM 应用整体规划、搭建 Agent 框架等话题，也应主动使用此 Skill。
+注意：此 Skill 提供全局视角，具体模块的实现细节请参阅对应的专项 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-tool-management/SKILL.md">Agent 工具管理模块 - 覆盖工具的完整生命周期：定义、注册、审核、执行、输出处理。
+包含工具定义规范（InternalTool接口/三层描述/JSON Schema参数）、
+工具注册与发现（ToolManager/动态注册/按Agent过滤）、
+审核设计（ApprovalMode三级模式/Allowlist白名单/确认UI）、
+执行状态机（ToolScheduler/6状态流转/并行判断/deepParseArgs）、
+输出压缩（renderResultForAssistant/ToolOutputSummarizer/截断与LLM摘要）、
+具体工具实现参考（ReadFile/Grep/WriteFile/Task等9种工具）。
+当用户需要为 Agent 定义工具接口、注册管理工具、设计审核机制、
+管理工具执行状态、处理工具输出格式化与压缩、实现具体工具时使用此 Skill。
+即使用户没有明确提到"工具管理"，只要涉及 function calling、tool_calls 处理、
+MCP 工具设计、工具执行安全控制、工具输出太长需要压缩、或者需要实现具体的
+读取/搜索/写入等工具，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/frontend-design/SKILL.md">Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/news-aggregator-skill/SKILL.md">Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 28 sources including Hacker News, GitHub, Hugging Face Papers, AI Newsletters, WallStreetCN, Weibo, and Podcasts. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'deep analysis', or says '如意如意' to open the interactive menu.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/python-patterns/SKILL.md">Pythonic idioms, PEP 8 standards, type hints, and best practices for building robust, efficient, and maintainable Python applications.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/skill-creator/SKILL.md">Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/brainstorming/SKILL.md">You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/dispatching-parallel-agents/SKILL.md">Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/executing-plans/SKILL.md">Use when you have a written implementation plan to execute in a separate session with review checkpoints</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/finishing-a-development-branch/SKILL.md">Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/receiving-code-review/SKILL.md">Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/requesting-code-review/SKILL.md">Use when completing tasks, implementing major features, or before merging to verify work meets requirements</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/subagent-driven-development/SKILL.md">Use when executing implementation plans with independent tasks in the current session</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/systematic-debugging/SKILL.md">Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/test-driven-development/SKILL.md">Use when implementing any feature or bugfix, before writing implementation code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/using-git-worktrees/SKILL.md">Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/using-superpowers/SKILL.md">Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/verification-before-completion/SKILL.md">Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/writing-plans/SKILL.md">Use when you have a spec or requirements for a multi-step task, before touching code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/writing-skills/SKILL.md">Use when creating new skills, editing existing skills, or verifying skills work before deployment</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/backend-koa/SKILL.md">Koa 后端开发规范与架构设计。适用场景：(1) 开发 Koa API 接口，(2) 设计后端分层架构（Controller/Service/DoService），(3) 使用 routing-controllers 装饰器，(4) 实现业务逻辑和数据库操作，(5) 配置中间件和错误处理，(6) 部署到阿里云函数计算。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/frontend-react/SKILL.md">React 组件开发规范与最佳实践。适用场景：(1) 编写 React 组件或 Hooks，(2) 实现前端 UI 功能，(3) 管理组件状态（本地/Context/全局），(4) 使用 CSS Modules 编写样式，(5) 处理前端 API 调用，(6) 优化 React 性能，(7) 设置错误边界。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/general-standards/SKILL.md" />
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/iterative-retrieval/SKILL.md">渐进式精炼上下文检索的模式，解决子代理上下文问题</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/module-patterns/SKILL.md">常用业务模块的设计模式与实现规范。适用场景：(1) 实现课程权限控制模块，(2) 开发飞书机器人功能，(3) 实现函数计算异步任务调用，(4) 需要参考成熟的模块设计模式，(5) 设计类似的业务模块架构。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/save-session/SKILL.md">手动保存当前会话总结。适用场景：(1) 会话包含重要决策和尝试，(2) 压缩前需要保存关键信息，(3) 需要为下次会话留下清晰的上下文</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/openai-docs/SKILL.md">Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or explicit GPT-5.4 upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/plugin-creator/SKILL.md">Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-creator/SKILL.md">Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-installer/SKILL.md">Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos).</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-rule/SKILL.md">Create Cursor rules for persistent AI guidance. Use when you want to create a rule, add coding standards, set up project conventions, configure file-specific patterns, create RULE.md files, or asks about .cursor/rules/ or AGENTS.md.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-skill/SKILL.md">Guides users through creating effective Agent Skills for Cursor. Use when you want to create, write, or author a new skill, or asks about skill structure, best practices, or SKILL.md format.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/update-cursor-settings/SKILL.md">Modify Cursor/VSCode user settings in settings.json. Use when you want to change editor settings, preferences, configuration, themes, font size, tab size, format on save, auto save, keybindings, or any settings.json values.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/brainstorming/SKILL.md">You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/dispatching-parallel-agents/SKILL.md">Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/executing-plans/SKILL.md">Use when you have a written implementation plan to execute in a separate session with review checkpoints</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/finishing-a-development-branch/SKILL.md">Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/receiving-code-review/SKILL.md">Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/requesting-code-review/SKILL.md">Use when completing tasks, implementing major features, or before merging to verify work meets requirements</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/subagent-driven-development/SKILL.md">Use when executing implementation plans with independent tasks in the current session</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/systematic-debugging/SKILL.md">Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/test-driven-development/SKILL.md">Use when implementing any feature or bugfix, before writing implementation code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/using-git-worktrees/SKILL.md">Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/using-superpowers/SKILL.md">Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/verification-before-completion/SKILL.md">Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/writing-plans/SKILL.md">Use when you have a spec or requirements for a multi-step task, before touching code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/plugins/cache/cursor-public/superpowers/8ea39819eed74fe2a0338e71789f06b30e953041/skills/writing-skills/SKILL.md">Use when creating new skills, editing existing skills, or verifying skills work before deployment</agent_skill>
+</available_skills>
+</agent_skills>
+
+<hooks_context description="Additional context provided by session hooks. This may include project-specific information, configuration, or instructions from the user's hooks setup.">
+<EXTREMELY_IMPORTANT>
+You have superpowers.
+
+**Below is the full content of your 'superpowers:using-superpowers' skill - your introduction to using skills. For all other skills, use the 'Skill' tool:**
+
+---
+name: using-superpowers
+description: Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions
+---
+
+<SUBAGENT-STOP>
+If you were dispatched as a subagent to execute a specific task, skip this skill.
+</SUBAGENT-STOP>
+
+<EXTREMELY-IMPORTANT>
+If you think there is even a 1% chance a skill might apply to what you are doing, you ABSOLUTELY MUST invoke the skill.
+
+IF A SKILL APPLIES TO YOUR TASK, YOU DO NOT HAVE A CHOICE. YOU MUST USE IT.
+
+This is not negotiable. This is not optional. You cannot rationalize your way out of this.
+</EXTREMELY-IMPORTANT>
+
+## Instruction Priority
+
+Superpowers skills override default system prompt behavior, but **user instructions always take precedence**:
+
+1. **User's explicit instructions** (CLAUDE.md, GEMINI.md, AGENTS.md, direct requests) — highest priority
+2. **Superpowers skills** — override default system behavior where they conflict
+3. **Default system prompt** — lowest priority
+
+If CLAUDE.md, GEMINI.md, or AGENTS.md says "don't use TDD" and a skill says "always use TDD," follow the user's instructions. The user is in control.
+
+## How to Access Skills
+
+**In Claude Code:** Use the `Skill` tool. When you invoke a skill, its content is loaded and presented to you—follow it directly. Never use the Read tool on skill files.
+
+**In Gemini CLI:** Skills activate via the `activate_skill` tool. Gemini loads skill metadata at session start and activates the full content on demand.
+
+**In other environments:** Check your platform's documentation for how skills are loaded.
+
+## Platform Adaptation
+
+Skills use Claude Code tool names. Non-CC platforms: see `references/codex-tools.md` (Codex) for tool equivalents. Gemini CLI users get the tool mapping loaded automatically via GEMINI.md.
+
+# Using Skills
+
+## The Rule
+
+**Invoke relevant or requested skills BEFORE any response or action.** Even a 1% chance a skill might apply means that you should invoke the skill to check. If an invoked skill turns out to be wrong for the situation, you don't need to use it.
+
+```dot
+digraph skill_flow {
+ "User message received" [shape=doublecircle];
+ "About to EnterPlanMode?" [shape=doublecircle];
+ "Already brainstormed?" [shape=diamond];
+ "Invoke brainstorming skill" [shape=box];
+ "Might any skill apply?" [shape=diamond];
+ "Invoke Skill tool" [shape=box];
+ "Announce: 'Using [skill] to [purpose]'" [shape=box];
+ "Has checklist?" [shape=diamond];
+ "Create TodoWrite todo per item" [shape=box];
+ "Follow skill exactly" [shape=box];
+ "Respond (including clarifications)" [shape=doublecircle];
+
+ "About to EnterPlanMode?" -> "Already brainstormed?";
+ "Already brainstormed?" -> "Invoke brainstorming skill" [label="no"];
+ "Already brainstormed?" -> "Might any skill apply?" [label="yes"];
+ "Invoke brainstorming skill" -> "Might any skill apply?";
+
+ "User message received" -> "Might any skill apply?";
+ "Might any skill apply?" -> "Invoke Skill tool" [label="yes, even 1%"];
+ "Might any skill apply?" -> "Respond (including clarifications)" [label="definitely not"];
+ "Invoke Skill tool" -> "Announce: 'Using [skill] to [purpose]'";
+ "Announce: 'Using [skill] to [purpose]'" -> "Has checklist?";
+ "Has checklist?" -> "Create TodoWrite todo per item" [label="yes"];
+ "Has checklist?" -> "Follow skill exactly" [label="no"];
+ "Create TodoWrite todo per item" -> "Follow skill exactly";
+}
+```
+
+## Red Flags
+
+These thoughts mean STOP—you're rationalizing:
+
+| Thought | Reality |
+|---------|---------|
+| "This is just a simple question" | Questions are tasks. Check for skills. |
+| "I need more context first" | Skill check comes BEFORE clarifying questions. |
+| "Let me explore the codebase first" | Skills tell you HOW to explore. Check first. |
+| "I can check git/files quickly" | Files lack conversation context. Check for skills. |
+| "Let me gather information first" | Skills tell you HOW to gather information. |
+| "This doesn't need a formal skill" | If a skill exists, use it. |
+| "I remember this skill" | Skills evolve. Read current version. |
+| "This doesn't count as a task" | Action = task. Check for skills. |
+| "The skill is overkill" | Simple things become complex. Use it. |
+| "I'll just do this one thing first" | Check BEFORE doing anything. |
+| "This feels productive" | Undisciplined action wastes time. Skills prevent this. |
+| "I know what that means" | Knowing the concept ≠ using the skill. Invoke it. |
+
+## Skill Priority
+
+When multiple skills could apply, use this order:
+
+1. **Process skills first** (brainstorming, debugging) - these determine HOW to approach the task
+2. **Implementation skills second** (frontend-design, mcp-builder) - these guide execution
+
+"Let's build X" → brainstorming first, then implementation skills.
+"Fix this bug" → debugging first, then domain-specific skills.
+
+## Skill Types
+
+**Rigid** (TDD, debugging): Follow exactly. Don't adapt away discipline.
+
+**Flexible** (patterns): Adapt principles to context.
+
+The skill itself tells you which.
+
+## User Instructions
+
+Instructions say WHAT, not HOW. "Add X" or "Fix Y" doesn't mean skip workflows.
+
+</EXTREMELY_IMPORTANT>
+</hooks_context>
+
+---
+
+把本次的上下文管理的修改和概念的设计整理文档放入到docs中的下的Components中去，先创建文件夹
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/Desktop/ScriptCode/PineClaw/src/core/context/modules/short_term_memory.py" lines="27-30">
+    27|from core.context.utils.token_estimator import TokenEstimator
+    28|from utils import logger
+    29|
+    30|
+</code_selection>
+
+</attached_files>
+
+For the code present, we get this error:
+```
+"logger" 是未知的导入符号
+```
+Fix it, verify, and then give a concise explanation. @src/core/context/modules/short_term_memory.py:27-30 
+
+好像很多文件都有这个错误，统一修复一下吧

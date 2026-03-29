@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.4.9",
+  "checkpoint_id": "445cafecacb1",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/Components/上下文投递目标设计/00_设计背景与概念.md",
+    "docs/Components/上下文投递目标设计/01_数据结构与接口.md",
+    "docs/Components/上下文投递目标设计/02_ContextManager组装流程.md",
+    "docs/Components/上下文投递目标设计/03_扩展指南与注意事项.md",
+    "src/api/routes/card_callback.py",
+    "src/api/routes/webhook.py",
+    "src/channels/feishu/channel.py",
+    "src/channels/feishu/event_handler.py",
+    "src/channels/registry.py",
+    "src/core/context/modules/short_term_memory.py",
+    "src/core/tool/approval.py",
+    "src/core/tool/feishu/bitable.py",
+    "src/core/tool/feishu/client.py",
+    "src/core/tool/feishu/doc.py",
+    "src/core/tool/feishu/drive.py",
+    "src/core/tool/feishu/message.py",
+    "src/core/tool/feishu/task.py",
+    "src/core/tool/scheduler.py",
+    "src/storage/base.py",
+    "src/storage/config_store.py",
+    "src/storage/conversation_store.py",
+    "src/storage/memory_store.py",
+    "src/storage/short_memory_store.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/44/5cafecacb1/0/metadata.json",
+      "transcript": "/44/5cafecacb1/0/full.jsonl",
+      "context": "/44/5cafecacb1/0/context.md",
+      "content_hash": "/44/5cafecacb1/0/content_hash.txt",
+      "prompt": "/44/5cafecacb1/0/prompt.txt"
+    }
+  ]
+}
