@@ -1,0 +1,987 @@
+/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Components/记忆模块
+
+读取这个准备做计划吧，日记录不是摘要，是完整的记录文件，和选择的这个@/Users/xjk/.pineclaw/memory/short_term/20260326_135830/history.jsonl 是一个东西，
+
+长期记忆模块使用的Agent是Low的，有什么不确定的地方和我讨论
+
+---
+
+长期记忆不是7个，只有4个1. 用户指令文件：用户对于Agent明确的指令和规则，类似于CLAUDE.md和AGENTS.md
+2. 用户基本信息和个人画像：这个是构建对于用户的整体认识
+3. 用户确认的事实和重要决策：这个里面存储的是大事件线下，用户的关键决策
+4. 用户的兴趣和关注的领域：对用户有更深入的了解，以此进行更好的回复
+
+第二个就是compress_to_month_summary(week_summaries, summarize_fn) -> str：将多个周摘要压缩为月摘要
+
+这个不是压缩的周摘要，月摘要使用的也是日记录，不是周记录
+
+还有一点就是：判断什么时候出发月压缩，是因为除了今天和昨天两个日记录，那么剩下的全部是周压缩，那么就可以考虑使用月压缩的策略
+
+不需要备份机制，太复杂啦
+
+触发时间可配置（默认每天 23:30
+
+---
+
+这个不需要：保留 load_all() 读当天文件，兼容现有 ShortTermMemoryContext，不需要兼容，保证代码精简
+
+LongTermMemoryContext，只加载用户指令文件，其他的不用加载。还有一个是memory的位置，放入到skills文件夹里面，记忆模块使用md文件的格式存储，采用的是Skill规范。
+因为我觉得用户产生的记忆数据，是用户独享宝贵的，用户是有完全的控制权的，为了方便用户迁移使用，整个文件的结构是符合Skill规范的，这样用户使用其他的Agent的时候，如果这个Agent支持加载Skill的话，那么用户完全可以导入使用，因为记忆模块的结构是符合渐进式披露的，一共有四层
+1. SKILL.md的元信息：对于记忆模块的简单描述
+2. SKILL.md的正文内容：这个里面是对于长期记忆中的文件介绍，让Agent按需加载相应的记忆文件，同时会简单介绍一下短期记忆的位置
+3. 长期记忆：这里会有几种不同类型的数据，用户指令、用户画像、纠错记录、事实与决策、话题与兴趣，每一种类型是一个单独的文件，长期记忆来源于对短期记忆做的摘要总结，里面也会引用相应的短期记忆文件的路径
+4. 短期记忆：这个就是用户的聊天记录文件，一般Agent叫做“会话记录文件”，但是我觉得个人助手Agent是没有“会话”这个概念的，因为陪伴是永久长期的，不是以任务目的的短期一段时间，所以我在设计上面取消“会话”这个概念
+
+不用理会现在的memory中的数据，都可以删除的，因为现在还是开发中
+
+---
+
+继续
+
+---
+
+<attached_files>
+
+<code_selection path="file:///Users/xjk/.cursor/plans/%E8%AE%B0%E5%BF%86%E6%A8%A1%E5%9D%97%E5%AE%8C%E6%95%B4%E5%AE%9E%E7%8E%B0_3000e0d6.plan.md" lines="1-378">
+     1|---
+     2|name: 记忆模块完整实现
+     3|overview: 将记忆模块实现为 Skill 规范结构，置于 ~/.pineclaw/skills/memory/ 下，包含短期记忆（按天/月 .jsonl + 周/月摘要压缩）和长期记忆（4 文件 + 定时 LOW Agent 更新）。
+     4|todos:
+     5|  - id: skill-structure
+     6|    content: 创建 memory Skill 骨架：SKILL.md（元信息+正文）+ long_term/ + short_term/ 目录结构
+     7|    status: pending
+     8|  - id: short-term-storage
+     9|    content: 重写 ShortMemoryStore：按天存 .jsonl，按月分文件夹，摘要文件管理，去掉 load_all 兼容
+    10|    status: pending
+    11|  - id: short-term-context
+    12|    content: 重写 ShortTermMemoryContext：基于 Token 预算的分层加载 + 按周/月压缩逻辑
+    13|    status: pending
+    14|  - id: compressor-upgrade
+    15|    content: 升级 ContextCompressor：周摘要（输入日记录）、月摘要（输入日记录+周摘要）、年摘要（输入月摘要）
+    16|    status: pending
+    17|  - id: long-term-storage
+    18|    content: 重写 LocalMemoryStore：4 文件管理 + diff 校验
+    19|    status: pending
+    20|  - id: long-term-context
+    21|    content: 重写 LongTermMemoryContext：只必加载 user_instructions.md，其他按需
+    22|    status: pending
+    23|  - id: memory-tools
+    24|    content: 实现 read_memory / edit_memory 工具，改造现有 memory 工具
+    25|    status: pending
+    26|  - id: update-agent
+    27|    content: 实现 MemoryUpdateAgent：4 个专职 LOW 模型 Agent 的系统提示词和执行逻辑
+    28|    status: pending
+    29|  - id: scheduler
+    30|    content: 实现定时更新调度器：APScheduler 每天 23:30 + 并行更新 + 更新日志
+    31|    status: pending
+    32|  - id: integration
+    33|    content: 适配 Agent / ContextManager / main.py / settings.py，删除旧 memory 目录
+    34|    status: pending
+    35|isProject: false
+    36|---
+    37|
+    38|# 记忆模块完整实现计划
+    39|
+    40|## 一、设计理念
+    41|
+    42|记忆模块是用户独享的宝贵数据，用户拥有完全控制权。整个模块采用 **Skill 规范**存储，方便用户迁移到任何支持 Skill 加载的 Agent 系统。
+    43|
+    44|个人助手 Agent 没有"会话"概念——陪伴是永久长期的，不是任务驱动的短期交互。因此用"短期记忆"替代传统的"会话记录"。
+    45|
+    46|### 4 层渐进式披露
+    47|
+    48|1. **SKILL.md 元信息**：对记忆模块的简单描述，Skill 扫描时读取
+    49|2. **SKILL.md 正文**：长期记忆文件索引 + 短期记忆位置说明，Agent 按需加载
+    50|3. **长期记忆文件**：4 种类型各一个 .md 文件，来源于对短期记忆的摘要总结，含溯源链接
+    51|4. **短期记忆文件**：完整的 .jsonl 对话记录，按天/月组织
+    52|
+    53|### 代码现状
+    54|
+    55|- `ShortMemoryStore`：时间戳文件夹 + `history.jsonl`，百分比裁剪压缩
+    56|- `LocalMemoryStore`：单个 `memory.md`，`append` / `rewrite` 操作
+    57|- `~/.pineclaw/memory/` 下的现有数据可以删除（开发中）
+    58|
+    59|---
+    60|
+    61|## 二、目标文件结构
+    62|
+    63|```
+    64|~/.pineclaw/skills/memory/                        # Skill 根目录
+    65|  SKILL.md                                        # 元信息(层1) + 正文(层2: 文件索引+加载策略)
+    66|  long_term/                                      # 层3: 长期记忆
+    67|    user_instructions.md                          # 用户对 Agent 的明确指令和规则
+    68|    user_profile.md                               # 用户基本信息和个人画像
+    69|    facts_and_decisions.md                        # 用户确认的事实和重要决策
+    70|    topics_and_interests.md                       # 用户的兴趣和关注领域
+    71|  short_term/                                     # 层4: 短期记忆
+    72|    state.json                                    # 追踪当前日期
+    73|    2026-03/
+    74|      2026-03-29.jsonl                            # 今天的完整对话记录
+    75|      2026-03-28.jsonl                            # 昨天
+    76|      ...
+    77|      week_03-17_to_03-23.summary.md              # 周摘要
+    78|    2026-02/
+    79|      month_2026-02.summary.md                    # 月摘要
+    80|      week_02-24_to_03-02.summary.md
+    81|      ...
+    82|      2026-02-28.jsonl                            # 原文保留
+    83|    year_2025.summary.md                          # 年摘要
+    84|  update_logs/
+    85|    2026-03-29.update.md                          # 长期记忆更新日志
+    86|```
+    87|
+    88|---
+    89|
+    90|## 三、SKILL.md 设计
+    91|
+    92|新建文件：`~/.pineclaw/skills/memory/SKILL.md`
+    93|
+    94|```yaml
+    95|---
+    96|name: "用户记忆"
+    97|type: memory
+    98|always_load_content: true
+    99|description: "用户的记忆模块。包含用户指令、偏好、交互历史。标记为 always_load_content，每次交互自动加载正文。"
+   100|---
+   101|```
+   102|
+   103|正文内容包含：
+   104|
+   105|- 长期记忆文件索引表（文件名、说明、加载条件、最后更新时间）
+   106|- `user_instructions.md` 标记为每次必加载，其他 3 个文件标记为按需加载
+   107|- 短期记忆加载策略说明（基于 Token 预算，从最近往回）
+   108|- 记忆更新规则简述
+   109|
+   110|需要在 `SkillMeta` 中支持 `always_load_content` 字段，scanner 扫描时识别此字段后自动加载正文。
+   111|
+   112|---
+   113|
+   114|## 四、短期记忆改造
+   115|
+   116|### 4.1 重写 `ShortMemoryStore`
+   117|
+   118|当前文件：`[src/storage/short_memory_store.py](src/storage/short_memory_store.py)`
+   119|
+   120|**核心变更**：
+   121|
+   122|- 废弃时间戳文件夹模式，改为按 `YYYY-MM/YYYY-MM-DD.jsonl` 组织
+   123|- 基础目录改为 `~/.pineclaw/skills/memory/short_term/`
+   124|- `state.json` 记录当前活跃日期
+   125|- 每天首次写入时自动创建当天文件和月份文件夹
+   126|- `append()` 写入当天 `.jsonl`
+   127|- 不保留 `load_all()` 兼容方法，代码精简
+   128|- 实现 `IContextStorage` 接口但方法签名适配新结构
+   129|
+   130|**公开方法**：
+   131|
+   132|- `append(message)` ：追加到当天 .jsonl
+   133|- `load_today() -> list[dict]`：读取今天的完整记录
+   134|- `load_daily(date) -> list[dict]`：读取指定日期的记录
+   135|- `get_daily_path(date) -> Path`：获取某天的 jsonl 路径
+   136|- `list_month_dirs() -> list[Path]`：列出所有月份文件夹（按时间排序）
+   137|- `list_daily_files(month_dir) -> list[Path]`：列出某月所有 .jsonl 文件
+   138|- `list_summaries(month_dir) -> list[Path]`：列出某月所有 .summary.md
+   139|- `is_covered_by_summary(date, summaries) -> bool`：判断某天是否被摘要覆盖
+   140|- `save_summary(path, content)`：写入摘要文件
+   141|- `count_today_lines() -> int`：当天记录行数
+   142|
+   143|### 4.2 重写 `ShortTermMemoryContext`
+   144|
+   145|当前文件：`[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)`
+   146|
+   147|**核心变更**：
+   148|
+   149|- `_load_memory()` 改为基于 Token 预算的分层加载逻辑
+   150|- 加载顺序：今天的 jsonl -> 往回逐天（遇到摘要加载摘要跳过日记录）-> 预算用完停止
+   151|- 初始加载预算 = 短期记忆总容量 x 70%（预留 30% 给当前对话增长）
+   152|- `needs_compression()` 判断条件：已用容量 >= 总容量 x 85%
+   153|- `compress()` 改为按周/月/年压缩逻辑（不再是百分比裁剪）
+   154|- 去掉 checkpoint 相关逻辑，压缩结果直接写入摘要文件
+   155|
+   156|### 4.3 压缩策略改造
+   157|
+   158|当前文件：`[src/core/context/utils/compressor.py](src/core/context/utils/compressor.py)`
+   159|
+   160|**三层压缩，各自的输入和侧重点不同**：
+   161|
+   162|- **周摘要**：输入 = 本周日记录原文。侧重"这周发生了什么，时间线是什么"，追求事件完整性
+   163|- **月摘要**：输入 = 本月日记录原文 + 已生成的周摘要。侧重"这个月的核心决策和变化"，追求关键节点。用日记录做输入是为了避免周摘要的"稀释"丢失细节
+   164|- **年摘要**：输入 = 月摘要。侧重"这一年最重要的里程碑"。从上下文窗口成本考虑，输入月摘要是最优解
+   165|
+   166|**新增方法**：
+   167|
+   168|- `compress_to_week_summary(daily_jsonl_paths, summarize_fn) -> str`：读取连续 N 天的日记录，压缩为周摘要 Markdown
+   169|- `compress_to_month_summary(daily_jsonl_paths, week_summary_texts, summarize_fn) -> str`：读取本月日记录 + 周摘要，压缩为月摘要
+   170|- `compress_to_year_summary(month_summary_texts, summarize_fn) -> str`：读取多个月摘要，压缩为年摘要
+   171|
+   172|**压缩触发逻辑**（在 `ShortTermMemoryContext.compress()` 中实现）：
+   173|
+   174|1. 已用容量 >= 85% 触发压缩
+   175|2. 检查已加载内容的结构：
+   176|  - **存在日记录（不含今天、昨天）** -> 压缩最早连续 7 天日记录为周摘要
+   177|  - **除今天和昨天外全是周摘要** -> 触发月压缩，将该月的日记录+周摘要合并为月摘要
+   178|  - **最早已是月摘要** -> 将多个月摘要压缩为年摘要
+   179|3. 用 LOW 模型 `simple_chat` 做摘要
+   180|4. 摘要写入磁盘，从内存移除被压缩的内容，替换为摘要
+   181|5. 压缩后检查是否 < 75%，不够则继续下一轮
+   182|
+   183|### 4.4 CompressionConfig 扩展
+   184|
+   185|当前文件：`[src/core/context/types.py](src/core/context/types.py)`
+   186|
+   187|在 `CompressionConfig` 中增加：
+   188|
+   189|- `initial_load_ratio: float = 0.70`
+   190|- `days_per_week_summary: int = 7`
+   191|
+   192|---
+   193|
+   194|## 五、长期记忆改造
+   195|
+   196|### 5.1 重写 `LocalMemoryStore`
+   197|
+   198|当前文件：`[src/storage/memory_store.py](src/storage/memory_store.py)`
+   199|
+   200|**核心变更**：
+   201|
+   202|- 从单文件 `memory.md` 改为管理 4 个独立 `.md` 文件
+   203|- 基础目录改为 `~/.pineclaw/skills/memory/long_term/`
+   204|- 文件列表：`user_instructions`, `user_profile`, `facts_and_decisions`, `topics_and_interests`
+   205|- 支持按文件名读写：`read_file("user_instructions")`, `write_file("user_instructions", content)`
+   206|- 增加 diff 校验逻辑：`safe_write(filename, new_content)` 提取条目 ID 对比，防止幻觉丢信息
+   207|- 增加条目 ID 提取：`_extract_entry_ids(content) -> set[str]`
+   208|
+   209|### 5.2 重写 `LongTermMemoryContext`
+   210|
+   211|当前文件：`[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)`
+   212|
+   213|**核心变更**：
+   214|
+   215|- **只必加载 `user_instructions.md`**（体量小，注入 system prompt）
+   216|- 其他 3 个文件（`user_profile`, `facts_and_decisions`, `topics_and_interests`）属于 Skill 渐进式加载的第 3 层，由 Agent 根据 SKILL.md 正文中的索引信息，使用 ReadFile 工具按需读取
+   217|- `format()` 只输出 `user_instructions.md` 的 `SystemPart`
+   218|- 文件不存在时跳过不报错（首次使用场景）
+   219|- `ContextManager` 不再负责其他 3 个文件的动态加载判断——这是 Agent 自身通过工具完成的
+   220|
+   221|### 5.3 新增 `edit_memory` 工具
+   222|
+   223|文档来源：[记忆模块更新工具的实现.md](docs/Components/记忆模块/记忆模块更新工具的实现.md)
+   224|
+   225|新建文件：`src/core/tool/edit_memory_tool.py`
+   226|
+   227|- 统一替换模型：`old_string` + `new_string`
+   228|- `file` 参数枚举 4 个文件名：`user_instructions`, `user_profile`, `facts_and_decisions`, `topics_and_interests`
+   229|- 精确匹配 + 宽松匹配（trim 后逐行比较）降级
+   230|- 错误类型：`not_found`, `ambiguous_match`, `no_change`, `file_not_found`
+   231|
+   232|### 5.4 改造 `memory_tools.py`
+   233|
+   234|当前文件：`[src/core/tool/memory_tools.py](src/core/tool/memory_tools.py)`
+   235|
+   236|- `memory` 工具的 `append` 操作改为支持指定 `file` 参数（4 个文件之一）
+   237|- `rewrite` 操作改为对单个文件的全文覆盖（加 diff 校验）
+   238|- 新增 `read_memory` 工具：读取指定长期记忆文件的内容
+   239|- 注册 `edit_memory` 工具
+   240|
+   241|---
+   242|
+   243|## 六、长期记忆定时更新系统
+   244|
+   245|### 6.1 新增更新调度器
+   246|
+   247|新建文件：`src/scheduler/memory_updater.py`
+   248|
+   249|- 使用 APScheduler（`AsyncIOScheduler`）注册每日定时任务
+   250|- 触发时间：每天 23:30（可在 config.json 中配置）
+   251|- 检查当天是否有日记录（jsonl 非空），没有则跳过
+   252|- 读取当天日记录全文 + 所有 4 个长期记忆文件当前内容
+   253|- 并行启动 4 个更新 coroutine（`asyncio.gather`）
+   254|
+   255|### 6.2 单个更新 Agent 实现
+   256|
+   257|新建文件：`src/core/agent/memory_update_agent.py`
+   258|
+   259|每个更新 Agent 是一个简单的 LLM 调用（非完整 Agent，只是 `simple_chat` + 工具调用）：
+   260|
+   261|- 输入：专属系统提示词 + 今日日记录文本 + 对应长期记忆文件当前内容
+   262|- 输出：调用 `write_file` 工具（需要更新时）或返回"无需更新"
+   263|- 使用 `llm_registry.get_low()` 的 `complete()` 方法带 `write_file` 工具定义
+   264|- 4 个 Agent 的专属提示词：
+   265|
+   266|**user_instructions 更新 Agent**：识别用户说的"以后都要..."、"记住不要..."等祈使句，提炼为指令写入
+   267|
+   268|**user_profile 更新 Agent**：识别用户透露的个人信息、职业、技术背景等，推断信息标注 `[推断]`
+   269|
+   270|**facts_and_decisions 更新 Agent**：识别用户做出的技术决策、确认的事实，含溯源链接指向日记录
+   271|
+   272|**topics_and_interests 更新 Agent**：识别用户反复讨论的话题和兴趣领域，需要一定频率才写入
+   273|
+   274|### 6.3 更新日志
+   275|
+   276|- 每次更新生成日志写入 `~/.pineclaw/skills/memory/update_logs/YYYY-MM-DD.update.md`
+   277|- 记录哪些文件更新了、新增/修改了什么、diff 校验结果
+   278|
+   279|### 6.4 配置扩展
+   280|
+   281|在 `config.json` 的 `memory` 节新增：
+   282|
+   283|```json
+   284|{
+   285|  "memory": {
+   286|    "short_term": { ... },
+   287|    "long_term": {
+   288|      "update_schedule": "23:30",
+   289|      "max_file_size_tokens": 3000,
+   290|      "enable_diff_check": true
+   291|    }
+   292|  }
+   293|}
+   294|```
+   295|
+   296|---
+   297|
+   298|## 七、Skill 扫描器适配
+   299|
+   300|### 7.1 `SkillMeta` 扩展
+   301|
+   302|文件：`[src/core/skill/types.py](src/core/skill/types.py)`
+   303|
+   304|- 新增 `always_load_content: bool = False` 字段
+   305|- 新增 `body: str = ""` 字段（存储 SKILL.md 正文）
+   306|
+   307|### 7.2 `scanner.py` 适配
+   308|
+   309|文件：`[src/core/skill/scanner.py](src/core/skill/scanner.py)`
+   310|
+   311|- `_parse_skill_md()` 解析 frontmatter 中的 `always_load_content` 字段
+   312|- 当 `always_load_content=true` 时，将正文存入 `SkillMeta.body`
+   313|- `build_catalog()` 对标记了 `always_load_content` 的 Skill，直接将正文内容内联到 catalog XML 中（而不是让 Agent 用 ReadFile 工具去读）
+   314|
+   315|---
+   316|
+   317|## 八、Agent 和 ContextManager 适配
+   318|
+   319|### 8.1 ContextManager 变更
+   320|
+   321|文件：`[src/core/context/manager.py](src/core/context/manager.py)`
+   322|
+   323|- `__init__` 接受新的 `LongTermMemoryContext`（只加载 user_instructions）
+   324|- 不再需要"按需加载"其他长期记忆文件的判断逻辑——Agent 通过 ReadFile 工具自己读取
+   325|
+   326|### 8.2 Agent 变更
+   327|
+   328|文件：`[src/core/agent/agent.py](src/core/agent/agent.py)`
+   329|
+   330|- `_compress_history()` 调用新的按周/月/年压缩逻辑
+   331|- `run()` 中 `needs_compression()` 使用新的 85% 阈值
+   332|- 注册新增的 `edit_memory` 和 `read_memory` 工具
+   333|
+   334|### 8.3 main.py 变更
+   335|
+   336|文件：`[src/main.py](src/main.py)`
+   337|
+   338|- 初始化 APScheduler，注册长期记忆定时更新任务
+   339|- 将 `llm_registry` 传入更新调度器
+   340|- shutdown 时关闭 scheduler
+   341|- 删除旧的 `~/.pineclaw/memory/` 目录（或在首次启动时处理）
+   342|
+   343|### 8.4 settings.py 变更
+   344|
+   345|文件：`[src/config/settings.py](src/config/settings.py)`
+   346|
+   347|- `memory.base_dir` 改为 `~/.pineclaw/skills/memory/`
+   348|- 更新所有路径引用
+   349|
+   350|---
+   351|
+   352|## 九、数据处理
+   353|
+   354|现有 `~/.pineclaw/memory/` 下的数据可以直接删除（用户确认开发中数据不保留），不需要迁移脚本。
+   355|
+   356|---
+   357|
+   358|## 十、依赖新增
+   359|
+   360|- `apscheduler>=4.0` 用于定时任务调度（需确认最新版本）
+   361|
+   362|---
+   363|
+   364|## 十一、实现顺序
+   365|
+   366|```
+   367|1. Skill 骨架 (SKILL.md + 目录结构)
+   368|2. ShortMemoryStore 重写（存储层）
+   369|3. ShortTermMemoryContext 重写 + ContextCompressor 升级（加载+压缩）
+   370|4. LocalMemoryStore 重写（4 文件 + diff 校验）
+   371|5. LongTermMemoryContext 重写（只加载 user_instructions）
+   372|6. 记忆工具（read_memory / edit_memory / memory 改造）
+   373|7. MemoryUpdateAgent + 调度器
+   374|8. SkillMeta / scanner 适配 always_load_content
+   375|9. Agent / ContextManager / main.py 整合 + 删除旧目录
+   376|```
+   377|
+   378|
+</code_selection>
+
+</attached_files>
+
+记忆模块完整实现计划
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+/Users/xjk/Desktop/ScriptCode/PineClaw/docs/Components/记忆模块
+
+读取这个准备做计划吧，日记录不是摘要，是完整的记录文件，和选择的这个@/Users/xjk/.pineclaw/memory/short_term/20260326_135830/history.jsonl 是一个东西，
+
+长期记忆模块使用的Agent是Low的，有什么不确定的地方和我讨论
+
+---
+
+长期记忆不是7个，只有4个1. 用户指令文件：用户对于Agent明确的指令和规则，类似于CLAUDE.md和AGENTS.md
+2. 用户基本信息和个人画像：这个是构建对于用户的整体认识
+3. 用户确认的事实和重要决策：这个里面存储的是大事件线下，用户的关键决策
+4. 用户的兴趣和关注的领域：对用户有更深入的了解，以此进行更好的回复
+
+第二个就是compress_to_month_summary(week_summaries, summarize_fn) -> str：将多个周摘要压缩为月摘要
+
+这个不是压缩的周摘要，月摘要使用的也是日记录，不是周记录
+
+还有一点就是：判断什么时候出发月压缩，是因为除了今天和昨天两个日记录，那么剩下的全部是周压缩，那么就可以考虑使用月压缩的策略
+
+不需要备份机制，太复杂啦
+
+触发时间可配置（默认每天 23:30
+
+---
+
+这个不需要：保留 load_all() 读当天文件，兼容现有 ShortTermMemoryContext，不需要兼容，保证代码精简
+
+LongTermMemoryContext，只加载用户指令文件，其他的不用加载。还有一个是memory的位置，放入到skills文件夹里面，记忆模块使用md文件的格式存储，采用的是Skill规范。
+因为我觉得用户产生的记忆数据，是用户独享宝贵的，用户是有完全的控制权的，为了方便用户迁移使用，整个文件的结构是符合Skill规范的，这样用户使用其他的Agent的时候，如果这个Agent支持加载Skill的话，那么用户完全可以导入使用，因为记忆模块的结构是符合渐进式披露的，一共有四层
+1. SKILL.md的元信息：对于记忆模块的简单描述
+2. SKILL.md的正文内容：这个里面是对于长期记忆中的文件介绍，让Agent按需加载相应的记忆文件，同时会简单介绍一下短期记忆的位置
+3. 长期记忆：这里会有几种不同类型的数据，用户指令、用户画像、纠错记录、事实与决策、话题与兴趣，每一种类型是一个单独的文件，长期记忆来源于对短期记忆做的摘要总结，里面也会引用相应的短期记忆文件的路径
+4. 短期记忆：这个就是用户的聊天记录文件，一般Agent叫做“会话记录文件”，但是我觉得个人助手Agent是没有“会话”这个概念的，因为陪伴是永久长期的，不是以任务目的的短期一段时间，所以我在设计上面取消“会话”这个概念
+
+不用理会现在的memory中的数据，都可以删除的，因为现在还是开发中
+
+---
+
+继续
+
+---
+
+<attached_files>
+
+<code_selection path="/Users/xjk/.cursor/plans/记忆模块完整实现_3000e0d6.plan.md" lines="1-341">
+     1|# 记忆模块完整实现计划
+     2|
+     3|## 一、设计理念
+     4|
+     5|记忆模块是用户独享的宝贵数据，用户拥有完全控制权。整个模块采用 **Skill 规范**存储，方便用户迁移到任何支持 Skill 加载的 Agent 系统。
+     6|
+     7|个人助手 Agent 没有"会话"概念——陪伴是永久长期的，不是任务驱动的短期交互。因此用"短期记忆"替代传统的"会话记录"。
+     8|
+     9|### 4 层渐进式披露
+    10|
+    11|1. **SKILL.md 元信息**：对记忆模块的简单描述，Skill 扫描时读取
+    12|2. **SKILL.md 正文**：长期记忆文件索引 + 短期记忆位置说明，Agent 按需加载
+    13|3. **长期记忆文件**：4 种类型各一个 .md 文件，来源于对短期记忆的摘要总结，含溯源链接
+    14|4. **短期记忆文件**：完整的 .jsonl 对话记录，按天/月组织
+    15|
+    16|### 代码现状
+    17|
+    18|- `ShortMemoryStore`：时间戳文件夹 + `history.jsonl`，百分比裁剪压缩
+    19|- `LocalMemoryStore`：单个 `memory.md`，`append` / `rewrite` 操作
+    20|- `~/.pineclaw/memory/` 下的现有数据可以删除（开发中）
+    21|
+    22|---
+    23|
+    24|## 二、目标文件结构
+    25|
+    26|```
+    27|~/.pineclaw/skills/memory/                        # Skill 根目录
+    28|  SKILL.md                                        # 元信息(层1) + 正文(层2: 文件索引+加载策略)
+    29|  long_term/                                      # 层3: 长期记忆
+    30|    user_instructions.md                          # 用户对 Agent 的明确指令和规则
+    31|    user_profile.md                               # 用户基本信息和个人画像
+    32|    facts_and_decisions.md                        # 用户确认的事实和重要决策
+    33|    topics_and_interests.md                       # 用户的兴趣和关注领域
+    34|  short_term/                                     # 层4: 短期记忆
+    35|    state.json                                    # 追踪当前日期
+    36|    2026-03/
+    37|      2026-03-29.jsonl                            # 今天的完整对话记录
+    38|      2026-03-28.jsonl                            # 昨天
+    39|      ...
+    40|      week_03-17_to_03-23.summary.md              # 周摘要
+    41|    2026-02/
+    42|      month_2026-02.summary.md                    # 月摘要
+    43|      week_02-24_to_03-02.summary.md
+    44|      ...
+    45|      2026-02-28.jsonl                            # 原文保留
+    46|    year_2025.summary.md                          # 年摘要
+    47|  update_logs/
+    48|    2026-03-29.update.md                          # 长期记忆更新日志
+    49|```
+    50|
+    51|---
+    52|
+    53|## 三、SKILL.md 设计
+    54|
+    55|新建文件：`~/.pineclaw/skills/memory/SKILL.md`
+    56|
+    57|```yaml
+    58|---
+    59|name: "用户记忆"
+    60|type: memory
+    61|always_load_content: true
+    62|description: "用户的记忆模块。包含用户指令、偏好、交互历史。标记为 always_load_content，每次交互自动加载正文。"
+    63|---
+    64|```
+    65|
+    66|正文内容包含：
+    67|
+    68|- 长期记忆文件索引表（文件名、说明、加载条件、最后更新时间）
+    69|- `user_instructions.md` 标记为每次必加载，其他 3 个文件标记为按需加载
+    70|- 短期记忆加载策略说明（基于 Token 预算，从最近往回）
+    71|- 记忆更新规则简述
+    72|
+    73|需要在 `SkillMeta` 中支持 `always_load_content` 字段，scanner 扫描时识别此字段后自动加载正文。
+    74|
+    75|---
+    76|
+    77|## 四、短期记忆改造
+    78|
+    79|### 4.1 重写 `ShortMemoryStore`
+    80|
+    81|当前文件：`[src/storage/short_memory_store.py](src/storage/short_memory_store.py)`
+    82|
+    83|**核心变更**：
+    84|
+    85|- 废弃时间戳文件夹模式，改为按 `YYYY-MM/YYYY-MM-DD.jsonl` 组织
+    86|- 基础目录改为 `~/.pineclaw/skills/memory/short_term/`
+    87|- `state.json` 记录当前活跃日期
+    88|- 每天首次写入时自动创建当天文件和月份文件夹
+    89|- `append()` 写入当天 `.jsonl`
+    90|- 不保留 `load_all()` 兼容方法，代码精简
+    91|- 实现 `IContextStorage` 接口但方法签名适配新结构
+    92|
+    93|**公开方法**：
+    94|
+    95|- `append(message)` ：追加到当天 .jsonl
+    96|- `load_today() -> list[dict]`：读取今天的完整记录
+    97|- `load_daily(date) -> list[dict]`：读取指定日期的记录
+    98|- `get_daily_path(date) -> Path`：获取某天的 jsonl 路径
+    99|- `list_month_dirs() -> list[Path]`：列出所有月份文件夹（按时间排序）
+   100|- `list_daily_files(month_dir) -> list[Path]`：列出某月所有 .jsonl 文件
+   101|- `list_summaries(month_dir) -> list[Path]`：列出某月所有 .summary.md
+   102|- `is_covered_by_summary(date, summaries) -> bool`：判断某天是否被摘要覆盖
+   103|- `save_summary(path, content)`：写入摘要文件
+   104|- `count_today_lines() -> int`：当天记录行数
+   105|
+   106|### 4.2 重写 `ShortTermMemoryContext`
+   107|
+   108|当前文件：`[src/core/context/modules/short_term_memory.py](src/core/context/modules/short_term_memory.py)`
+   109|
+   110|**核心变更**：
+   111|
+   112|- `_load_memory()` 改为基于 Token 预算的分层加载逻辑
+   113|- 加载顺序：今天的 jsonl -> 往回逐天（遇到摘要加载摘要跳过日记录）-> 预算用完停止
+   114|- 初始加载预算 = 短期记忆总容量 x 70%（预留 30% 给当前对话增长）
+   115|- `needs_compression()` 判断条件：已用容量 >= 总容量 x 85%
+   116|- `compress()` 改为按周/月/年压缩逻辑（不再是百分比裁剪）
+   117|- 去掉 checkpoint 相关逻辑，压缩结果直接写入摘要文件
+   118|
+   119|### 4.3 压缩策略改造
+   120|
+   121|当前文件：`[src/core/context/utils/compressor.py](src/core/context/utils/compressor.py)`
+   122|
+   123|**三层压缩，各自的输入和侧重点不同**：
+   124|
+   125|- **周摘要**：输入 = 本周日记录原文。侧重"这周发生了什么，时间线是什么"，追求事件完整性
+   126|- **月摘要**：输入 = 本月日记录原文 + 已生成的周摘要。侧重"这个月的核心决策和变化"，追求关键节点。用日记录做输入是为了避免周摘要的"稀释"丢失细节
+   127|- **年摘要**：输入 = 月摘要。侧重"这一年最重要的里程碑"。从上下文窗口成本考虑，输入月摘要是最优解
+   128|
+   129|**新增方法**：
+   130|
+   131|- `compress_to_week_summary(daily_jsonl_paths, summarize_fn) -> str`：读取连续 N 天的日记录，压缩为周摘要 Markdown
+   132|- `compress_to_month_summary(daily_jsonl_paths, week_summary_texts, summarize_fn) -> str`：读取本月日记录 + 周摘要，压缩为月摘要
+   133|- `compress_to_year_summary(month_summary_texts, summarize_fn) -> str`：读取多个月摘要，压缩为年摘要
+   134|
+   135|**压缩触发逻辑**（在 `ShortTermMemoryContext.compress()` 中实现）：
+   136|
+   137|1. 已用容量 >= 85% 触发压缩
+   138|2. 检查已加载内容的结构：
+   139|  - **存在日记录（不含今天、昨天）** -> 压缩最早连续 7 天日记录为周摘要
+   140|  - **除今天和昨天外全是周摘要** -> 触发月压缩，将该月的日记录+周摘要合并为月摘要
+   141|  - **最早已是月摘要** -> 将多个月摘要压缩为年摘要
+   142|3. 用 LOW 模型 `simple_chat` 做摘要
+   143|4. 摘要写入磁盘，从内存移除被压缩的内容，替换为摘要
+   144|5. 压缩后检查是否 < 75%，不够则继续下一轮
+   145|
+   146|### 4.4 CompressionConfig 扩展
+   147|
+   148|当前文件：`[src/core/context/types.py](src/core/context/types.py)`
+   149|
+   150|在 `CompressionConfig` 中增加：
+   151|
+   152|- `initial_load_ratio: float = 0.70`
+   153|- `days_per_week_summary: int = 7`
+   154|
+   155|---
+   156|
+   157|## 五、长期记忆改造
+   158|
+   159|### 5.1 重写 `LocalMemoryStore`
+   160|
+   161|当前文件：`[src/storage/memory_store.py](src/storage/memory_store.py)`
+   162|
+   163|**核心变更**：
+   164|
+   165|- 从单文件 `memory.md` 改为管理 4 个独立 `.md` 文件
+   166|- 基础目录改为 `~/.pineclaw/skills/memory/long_term/`
+   167|- 文件列表：`user_instructions`, `user_profile`, `facts_and_decisions`, `topics_and_interests`
+   168|- 支持按文件名读写：`read_file("user_instructions")`, `write_file("user_instructions", content)`
+   169|- 增加 diff 校验逻辑：`safe_write(filename, new_content)` 提取条目 ID 对比，防止幻觉丢信息
+   170|- 增加条目 ID 提取：`_extract_entry_ids(content) -> set[str]`
+   171|
+   172|### 5.2 重写 `LongTermMemoryContext`
+   173|
+   174|当前文件：`[src/core/context/modules/long_term_memory.py](src/core/context/modules/long_term_memory.py)`
+   175|
+   176|**核心变更**：
+   177|
+   178|- **只必加载 `user_instructions.md`**（体量小，注入 system prompt）
+   179|- 其他 3 个文件（`user_profile`, `facts_and_decisions`, `topics_and_interests`）属于 Skill 渐进式加载的第 3 层，由 Agent 根据 SKILL.md 正文中的索引信息，使用 ReadFile 工具按需读取
+   180|- `format()` 只输出 `user_instructions.md` 的 `SystemPart`
+   181|- 文件不存在时跳过不报错（首次使用场景）
+   182|- `ContextManager` 不再负责其他 3 个文件的动态加载判断——这是 Agent 自身通过工具完成的
+   183|
+   184|### 5.3 新增 `edit_memory` 工具
+   185|
+   186|文档来源：[记忆模块更新工具的实现.md](docs/Components/记忆模块/记忆模块更新工具的实现.md)
+   187|
+   188|新建文件：`src/core/tool/edit_memory_tool.py`
+   189|
+   190|- 统一替换模型：`old_string` + `new_string`
+   191|- `file` 参数枚举 4 个文件名：`user_instructions`, `user_profile`, `facts_and_decisions`, `topics_and_interests`
+   192|- 精确匹配 + 宽松匹配（trim 后逐行比较）降级
+   193|- 错误类型：`not_found`, `ambiguous_match`, `no_change`, `file_not_found`
+   194|
+   195|### 5.4 改造 `memory_tools.py`
+   196|
+   197|当前文件：`[src/core/tool/memory_tools.py](src/core/tool/memory_tools.py)`
+   198|
+   199|- `memory` 工具的 `append` 操作改为支持指定 `file` 参数（4 个文件之一）
+   200|- `rewrite` 操作改为对单个文件的全文覆盖（加 diff 校验）
+   201|- 新增 `read_memory` 工具：读取指定长期记忆文件的内容
+   202|- 注册 `edit_memory` 工具
+   203|
+   204|---
+   205|
+   206|## 六、长期记忆定时更新系统
+   207|
+   208|### 6.1 新增更新调度器
+   209|
+   210|新建文件：`src/scheduler/memory_updater.py`
+   211|
+   212|- 使用 APScheduler（`AsyncIOScheduler`）注册每日定时任务
+   213|- 触发时间：每天 23:30（可在 config.json 中配置）
+   214|- 检查当天是否有日记录（jsonl 非空），没有则跳过
+   215|- 读取当天日记录全文 + 所有 4 个长期记忆文件当前内容
+   216|- 并行启动 4 个更新 coroutine（`asyncio.gather`）
+   217|
+   218|### 6.2 单个更新 Agent 实现
+   219|
+   220|新建文件：`src/core/agent/memory_update_agent.py`
+   221|
+   222|每个更新 Agent 是一个简单的 LLM 调用（非完整 Agent，只是 `simple_chat` + 工具调用）：
+   223|
+   224|- 输入：专属系统提示词 + 今日日记录文本 + 对应长期记忆文件当前内容
+   225|- 输出：调用 `write_file` 工具（需要更新时）或返回"无需更新"
+   226|- 使用 `llm_registry.get_low()` 的 `complete()` 方法带 `write_file` 工具定义
+   227|- 4 个 Agent 的专属提示词：
+   228|
+   229|**user_instructions 更新 Agent**：识别用户说的"以后都要..."、"记住不要..."等祈使句，提炼为指令写入
+   230|
+   231|**user_profile 更新 Agent**：识别用户透露的个人信息、职业、技术背景等，推断信息标注 `[推断]`
+   232|
+   233|**facts_and_decisions 更新 Agent**：识别用户做出的技术决策、确认的事实，含溯源链接指向日记录
+   234|
+   235|**topics_and_interests 更新 Agent**：识别用户反复讨论的话题和兴趣领域，需要一定频率才写入
+   236|
+   237|### 6.3 更新日志
+   238|
+   239|- 每次更新生成日志写入 `~/.pineclaw/skills/memory/update_logs/YYYY-MM-DD.update.md`
+   240|- 记录哪些文件更新了、新增/修改了什么、diff 校验结果
+   241|
+   242|### 6.4 配置扩展
+   243|
+   244|在 `config.json` 的 `memory` 节新增：
+   245|
+   246|```json
+   247|{
+   248|  "memory": {
+   249|    "short_term": { ... },
+   250|    "long_term": {
+   251|      "update_schedule": "23:30",
+   252|      "max_file_size_tokens": 3000,
+   253|      "enable_diff_check": true
+   254|    }
+   255|  }
+   256|}
+   257|```
+   258|
+   259|---
+   260|
+   261|## 七、Skill 扫描器适配
+   262|
+   263|### 7.1 `SkillMeta` 扩展
+   264|
+   265|文件：`[src/core/skill/types.py](src/core/skill/types.py)`
+   266|
+   267|- 新增 `always_load_content: bool = False` 字段
+   268|- 新增 `body: str = ""` 字段（存储 SKILL.md 正文）
+   269|
+   270|### 7.2 `scanner.py` 适配
+   271|
+   272|文件：`[src/core/skill/scanner.py](src/core/skill/scanner.py)`
+   273|
+   274|- `_parse_skill_md()` 解析 frontmatter 中的 `always_load_content` 字段
+   275|- 当 `always_load_content=true` 时，将正文存入 `SkillMeta.body`
+   276|- `build_catalog()` 对标记了 `always_load_content` 的 Skill，直接将正文内容内联到 catalog XML 中（而不是让 Agent 用 ReadFile 工具去读）
+   277|
+   278|---
+   279|
+   280|## 八、Agent 和 ContextManager 适配
+   281|
+   282|### 8.1 ContextManager 变更
+   283|
+   284|文件：`[src/core/context/manager.py](src/core/context/manager.py)`
+   285|
+   286|- `__init__` 接受新的 `LongTermMemoryContext`（只加载 user_instructions）
+   287|- 不再需要"按需加载"其他长期记忆文件的判断逻辑——Agent 通过 ReadFile 工具自己读取
+   288|
+   289|### 8.2 Agent 变更
+   290|
+   291|文件：`[src/core/agent/agent.py](src/core/agent/agent.py)`
+   292|
+   293|- `_compress_history()` 调用新的按周/月/年压缩逻辑
+   294|- `run()` 中 `needs_compression()` 使用新的 85% 阈值
+   295|- 注册新增的 `edit_memory` 和 `read_memory` 工具
+   296|
+   297|### 8.3 main.py 变更
+   298|
+   299|文件：`[src/main.py](src/main.py)`
+   300|
+   301|- 初始化 APScheduler，注册长期记忆定时更新任务
+   302|- 将 `llm_registry` 传入更新调度器
+   303|- shutdown 时关闭 scheduler
+   304|- 删除旧的 `~/.pineclaw/memory/` 目录（或在首次启动时处理）
+   305|
+   306|### 8.4 settings.py 变更
+   307|
+   308|文件：`[src/config/settings.py](src/config/settings.py)`
+   309|
+   310|- `memory.base_dir` 改为 `~/.pineclaw/skills/memory/`
+   311|- 更新所有路径引用
+   312|
+   313|---
+   314|
+   315|## 九、数据处理
+   316|
+   317|现有 `~/.pineclaw/memory/` 下的数据可以直接删除（用户确认开发中数据不保留），不需要迁移脚本。
+   318|
+   319|---
+   320|
+   321|## 十、依赖新增
+   322|
+   323|- `apscheduler>=4.0` 用于定时任务调度（需确认最新版本）
+   324|
+   325|---
+   326|
+   327|## 十一、实现顺序
+   328|
+   329|```
+   330|1. Skill 骨架 (SKILL.md + 目录结构)
+   331|2. ShortMemoryStore 重写（存储层）
+   332|3. ShortTermMemoryContext 重写 + ContextCompressor 升级（加载+压缩）
+   333|4. LocalMemoryStore 重写（4 文件 + diff 校验）
+   334|5. LongTermMemoryContext 重写（只加载 user_instructions）
+   335|6. 记忆工具（read_memory / edit_memory / memory 改造）
+   336|7. MemoryUpdateAgent + 调度器
+   337|8. SkillMeta / scanner 适配 always_load_content
+   338|9. Agent / ContextManager / main.py 整合 + 删除旧目录
+   339|```
+   340|
+   341|
+</code_selection>
+
+</attached_files>
+
+Implement the plan as specified, it is attached for your reference. Do NOT edit the plan file itself.
+
+To-do's from the plan have already been created. Do not create them again. Mark them as in_progress as you work, starting with the first one. Don't stop until you have completed all the to-dos.
+
+---
+
+<git_status>
+This is the git status at the start of the conversation. Note that this status is a snapshot in time, and will not update during the conversation.
+
+Git repo: /Users/xjk/Desktop/ScriptCode/PineClaw
+
+## main
+</git_status>
+
+<agent_transcripts>
+Agent transcripts (past chats) live in /Users/xjk/.cursor/projects/Users-xjk-Desktop-ScriptCode-PineClaw/agent-transcripts. They have names like <uuid>.jsonl, cite them to the user as [<title for chat <=6 words>](<uuid excluding .jsonl>). NEVER cite subagent transcripts/IDs; you can only cite parent uuids. Don't discuss the folder structure.
+</agent_transcripts>
+
+<agent_skills>
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge. To use a skill, read the skill file at the provided absolute path using the Read tool, then follow the instructions within. When a skill is relevant, read and follow it IMMEDIATELY as your first action. NEVER just announce or mention a skill without actually reading and following it. Only use skills listed below.
+
+<available_skills description="Skills the agent can use. Use the Read tool with the provided absolute path to fetch full contents.">
+<agent_skill fullPath="/Users/xjk/.cursor/skills/find-skills/SKILL.md">Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-agent-patterns/SKILL.md">Agent 形态模块 - 决定如何使用上下文和 LLM 来解决用户问题的执行器设计。
+包含单智能体设计（Agent类/生命周期/工具过滤/AgentConfig/四种预设）、
+多智能体设计（AgentManager/监督者/群体/层级模式/子代理规模控制）、
+执行引擎详解（ExecutionEngine主循环/工具调度/溢出控制/流式输出/中断处理）、
+协同与自主Agent交互形态（场域理论/双向信息流/意图上下文vs状态上下文）。
+当用户需要构建单智能体、设计多智能体协作、实现执行引擎、
+或理解协同Agent与自主Agent的区别时使用此 Skill。
+即使用户没有明确提到"Agent形态"，只要涉及 Agent 类设计、工具循环实现、
+主代理与子代理协作、Agent 预设配置、执行引擎的 while 循环、
+maxLoops 控制、AbortController 中断、或者 Agent 如何调度工具等话题，
+也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-context-management/SKILL.md">Agent 上下文管理模块 - Agent 的核心，负责编排上下文输入给 LLM。
+包含上下文架构（BaseContext基类/ContextManager/消息组装顺序）、
+各上下文类详解（SystemPromptContext/HistoryContext含LLM压缩/CurrentTurnContext）、
+上下文压缩机制（ClaudeCode 9段式/Gemini 5点/工具消息裁剪/消息移除）、
+Token压缩策略（TokenEstimator/三种策略/消息优先级/自适应选择）、
+上下文问题与解决（污染/干扰/冲突/混淆四大问题）、
+消息清理与验证（sanitizeMessages/validateMessages/tool_calls配对）。
+当用户需要设计上下文架构、实现压缩策略、管理Token预算、
+解决上下文问题、或实现消息清理验证时使用此 Skill。
+即使用户没有明确提到"上下文管理"，只要涉及消息序列组装、对话历史压缩、
+token 预算控制、LLM 输入编排、system prompt 设计、conversation history 管理、
+tool_calls 与 tool 响应的配对验证、或者 Agent 对话变长后响应质量下降等问题，
+也应主动使用此 Skill。更长的上下文不等于更好的响应，设计重点不在"获取"而在"整理"。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-evaluation/SKILL.md">Agent 评估模块 - 使提示词设计从"艺术"走向"工程"。
+包含评估方法论（代码评分/人工评分/模型评分/80-20数据集划分/pass@k与pass^k）、
+评估器实现（EventBus事件总线/TestCase结构/评估函数/Agent埋点/格式化输出）、
+不同类型Agent评估（编码Agent/对话Agent/研究Agent/计算机使用Agent的评估维度和策略）。
+当用户需要设计Agent评估方案、实现评估器、建立测试用例、
+或针对特定类型Agent制定评估策略时使用此 Skill。
+即使用户没有明确提到"评估"，只要涉及 Agent 质量度量、prompt 优化效果验证、
+Agent 稳定性测试、pass@k/pass^k 指标计算、AB 测试提示词、
+或者想知道如何科学地迭代改进 Agent 等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-llm-module/SKILL.md">Agent LLM 模块 - 通过统一接口和工厂模式对接多种模型供应商。
+包含 ILLMService 统一接口（complete/simpleChat/generate）、
+工厂模式与服务注册表（createLLMService/LLMServiceRegistry/ModelTier分层缓存）、
+多供应商适配（消息格式转换/工具格式转换/流式输出/重试与退避策略）。
+支持 DeepSeek、OpenRouter、OpenAI、Anthropic 等供应商的差异适配。
+当用户需要设计统一 LLM 接口、实现工厂模式、适配多供应商、
+处理流式输出、实现重试机制时使用此 Skill。
+即使用户没有明确提到"LLM模块"，只要涉及调用大模型 API、封装 OpenAI/Anthropic/DeepSeek 接口、
+处理 chat completions 返回值、实现流式输出、tool_calls 解析、多模型切换、
+或者模型调用失败重试等话题，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-overview/SKILL.md">上下文工程架构总览 - 基于上下文工程构建 Agent 后端的整体设计方法论。
+涵盖四大核心模块（工具管理、上下文管理、LLM模块、Agent形态）的协作关系、
+执行循环、推荐目录结构与渐进式增长路径。
+当用户需要从零开始搭建 Agent 后端、理解 Agent 各模块如何协作、
+选择项目结构、或进行整体架构设计时使用此 Skill。
+即使用户没有明确提到"上下文工程"或"架构总览"，只要涉及 Agent 后端开发、
+AI 应用架构设计、LLM 应用整体规划、搭建 Agent 框架等话题，也应主动使用此 Skill。
+注意：此 Skill 提供全局视角，具体模块的实现细节请参阅对应的专项 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/ce-tool-management/SKILL.md">Agent 工具管理模块 - 覆盖工具的完整生命周期：定义、注册、审核、执行、输出处理。
+包含工具定义规范（InternalTool接口/三层描述/JSON Schema参数）、
+工具注册与发现（ToolManager/动态注册/按Agent过滤）、
+审核设计（ApprovalMode三级模式/Allowlist白名单/确认UI）、
+执行状态机（ToolScheduler/6状态流转/并行判断/deepParseArgs）、
+输出压缩（renderResultForAssistant/ToolOutputSummarizer/截断与LLM摘要）、
+具体工具实现参考（ReadFile/Grep/WriteFile/Task等9种工具）。
+当用户需要为 Agent 定义工具接口、注册管理工具、设计审核机制、
+管理工具执行状态、处理工具输出格式化与压缩、实现具体工具时使用此 Skill。
+即使用户没有明确提到"工具管理"，只要涉及 function calling、tool_calls 处理、
+MCP 工具设计、工具执行安全控制、工具输出太长需要压缩、或者需要实现具体的
+读取/搜索/写入等工具，也应主动使用此 Skill。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/frontend-design/SKILL.md">Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks to build web components, pages, artifacts, posters, or applications (examples include websites, landing pages, dashboards, React components, HTML/CSS layouts, or when styling/beautifying any web UI). Generates creative, polished code and UI design that avoids generic AI aesthetics.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/news-aggregator-skill/SKILL.md">Comprehensive news aggregator that fetches, filters, and deeply analyzes real-time content from 28 sources including Hacker News, GitHub, Hugging Face Papers, AI Newsletters, WallStreetCN, Weibo, and Podcasts. Use when user requests 'daily scans', 'tech news', 'finance updates', 'AI briefings', 'deep analysis', or says '如意如意' to open the interactive menu.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/python-patterns/SKILL.md">Pythonic idioms, PEP 8 standards, type hints, and best practices for building robust, efficient, and maintainable Python applications.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/skill-creator/SKILL.md">Create new skills, modify and improve existing skills, and measure skill performance. Use when users want to create a skill from scratch, edit, or optimize an existing skill, run evals to test a skill, benchmark skill performance with variance analysis, or optimize a skill's description for better triggering accuracy.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/brainstorming/SKILL.md">You MUST use this before any creative work - creating features, building components, adding functionality, or modifying behavior. Explores user intent, requirements and design before implementation.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/dispatching-parallel-agents/SKILL.md">Use when facing 2+ independent tasks that can be worked on without shared state or sequential dependencies</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/executing-plans/SKILL.md">Use when you have a written implementation plan to execute in a separate session with review checkpoints</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/finishing-a-development-branch/SKILL.md">Use when implementation is complete, all tests pass, and you need to decide how to integrate the work - guides completion of development work by presenting structured options for merge, PR, or cleanup</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/receiving-code-review/SKILL.md">Use when receiving code review feedback, before implementing suggestions, especially if feedback seems unclear or technically questionable - requires technical rigor and verification, not performative agreement or blind implementation</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/requesting-code-review/SKILL.md">Use when completing tasks, implementing major features, or before merging to verify work meets requirements</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/subagent-driven-development/SKILL.md">Use when executing implementation plans with independent tasks in the current session</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/systematic-debugging/SKILL.md">Use when encountering any bug, test failure, or unexpected behavior, before proposing fixes</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/test-driven-development/SKILL.md">Use when implementing any feature or bugfix, before writing implementation code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/using-git-worktrees/SKILL.md">Use when starting feature work that needs isolation from current workspace or before executing implementation plans - creates isolated git worktrees with smart directory selection and safety verification</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/using-superpowers/SKILL.md">Use when starting any conversation - establishes how to find and use skills, requiring Skill tool invocation before ANY response including clarifying questions</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/verification-before-completion/SKILL.md">Use when about to claim work is complete, fixed, or passing, before committing or creating PRs - requires running verification commands and confirming output before making any success claims; evidence before assertions always</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/writing-plans/SKILL.md">Use when you have a spec or requirements for a multi-step task, before touching code</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.agents/skills/superpowers/writing-skills/SKILL.md">Use when creating new skills, editing existing skills, or verifying skills work before deployment</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/backend-koa/SKILL.md">Koa 后端开发规范与架构设计。适用场景：(1) 开发 Koa API 接口，(2) 设计后端分层架构（Controller/Service/DoService），(3) 使用 routing-controllers 装饰器，(4) 实现业务逻辑和数据库操作，(5) 配置中间件和错误处理，(6) 部署到阿里云函数计算。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/frontend-react/SKILL.md">React 组件开发规范与最佳实践。适用场景：(1) 编写 React 组件或 Hooks，(2) 实现前端 UI 功能，(3) 管理组件状态（本地/Context/全局），(4) 使用 CSS Modules 编写样式，(5) 处理前端 API 调用，(6) 优化 React 性能，(7) 设置错误边界。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/general-standards/SKILL.md" />
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/iterative-retrieval/SKILL.md">渐进式精炼上下文检索的模式，解决子代理上下文问题</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/module-patterns/SKILL.md">常用业务模块的设计模式与实现规范。适用场景：(1) 实现课程权限控制模块，(2) 开发飞书机器人功能，(3) 实现函数计算异步任务调用，(4) 需要参考成熟的模块设计模式，(5) 设计类似的业务模块架构。</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.claude/skills/save-session/SKILL.md">手动保存当前会话总结。适用场景：(1) 会话包含重要决策和尝试，(2) 压缩前需要保存关键信息，(3) 需要为下次会话留下清晰的上下文</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/imagegen/SKILL.md">Generate or edit raster images when the task benefits from AI-created bitmap visuals such as photos, illustrations, textures, sprites, mockups, or transparent-background cutouts. Use when Codex should create a brand-new image, transform an existing image, or derive visual variants from references, and the output should be a bitmap asset rather than repo-native code or vector. Do not use when the task is better handled by editing existing SVG/vector/code-native assets, extending an established icon or logo system, or building the visual directly in HTML/CSS/canvas.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/openai-docs/SKILL.md">Use when the user asks how to build with OpenAI products or APIs and needs up-to-date official documentation with citations, help choosing the latest model for a use case, or explicit GPT-5.4 upgrade and prompt-upgrade guidance; prioritize OpenAI docs MCP tools, use bundled references only as helper context, and restrict any fallback browsing to official OpenAI domains.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/plugin-creator/SKILL.md">Create and scaffold plugin directories for Codex with a required `.codex-plugin/plugin.json`, optional plugin folders/files, and baseline placeholders you can edit before publishing or testing. Use when Codex needs to create a new local plugin, add optional plugin structure, or generate or update repo-root `.agents/plugins/marketplace.json` entries for plugin ordering and availability metadata.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-creator/SKILL.md">Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Codex's capabilities with specialized knowledge, workflows, or tool integrations.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.codex/skills/.system/skill-installer/SKILL.md">Install Codex skills into $CODEX_HOME/skills from a curated list or a GitHub repo path. Use when a user asks to list installable skills, install a curated skill, or install a skill from another repo (including private repos).</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-rule/SKILL.md">Create Cursor rules for persistent AI guidance. Use when you want to create a rule, add coding standards, set up project conventions, configure file-specific patterns, create RULE.md files, or asks about .cursor/rules/ or AGENTS.md.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/create-skill/SKILL.md">Guides users through creating effective Agent Skills for Cursor. Use when you want to create, write, or author a new skill, or asks about skill structure, best practices, or SKILL.md format.</agent_skill>
+
+<agent_skill fullPath="/Users/xjk/.cursor/skills-cursor/update-cursor-settings/SKILL.md">Modify Cursor/VSCode user settings in settings.json. Use when you want to change editor settings, preferences, configuration, themes, font size, tab size, format on save, auto save, keybindings, or any settings.json values.</agent_skill>
+</available_skills>
+</agent_skills>
+
+---
+
+整理一份文档放入到docs中的记忆模块的文件夹，文档名字叫做，PlenClaw的记忆模块需求实现文档
