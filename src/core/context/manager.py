@@ -101,7 +101,11 @@ class ContextManager:
         )
 
     async def compress(self, summarize_fn: Callable[[str], Awaitable[str]]) -> None:
-        """Trigger compression on short-term memory."""
+        """Trigger compression on short-term memory.
+
+        Tries disk-based week summary first, then falls back to in-memory
+        compression for within-day overflow.
+        """
         result = await self._short_term.compress(
             summarize_fn,
             keep_ratio=self._config.compress_keep_ratio,

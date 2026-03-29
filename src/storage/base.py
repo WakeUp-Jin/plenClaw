@@ -66,7 +66,7 @@ class IStorage:
 
 
 class IContextStorage(ABC):
-    """Pure I/O contract for persisting context items and compression state.
+    """Minimal I/O contract for persisting context items.
 
     Implemented by ``ShortMemoryStore``; consumed by ``ShortTermMemoryContext``.
     """
@@ -74,29 +74,4 @@ class IContextStorage(ABC):
     @abstractmethod
     def append(self, message: dict[str, Any]) -> None:
         """Append a single serialised ContextItem dict."""
-        ...
-
-    @abstractmethod
-    def load_all(self) -> list[dict[str, Any]]:
-        """Load all stored items from the active segment."""
-        ...
-
-    @abstractmethod
-    def load_from_line(self, line_number: int) -> list[dict[str, Any]]:
-        """Load items starting from *line_number* (0-based)."""
-        ...
-
-    @abstractmethod
-    def count_lines(self) -> int:
-        """Return the total number of stored items."""
-        ...
-
-    @abstractmethod
-    def save_checkpoint(self, summary: str, checkpoint_line: int) -> None:
-        """Persist compression checkpoint state."""
-        ...
-
-    @abstractmethod
-    def load_checkpoint(self) -> dict[str, Any] | None:
-        """Load checkpoint or return ``None`` if none exists."""
         ...

@@ -126,6 +126,10 @@ def build_catalog(skills: list[SkillMeta]) -> str:
         lines.append(f'    <name>{name}</name>')
         lines.append(f'    <description>{desc}</description>')
         lines.append(f'    <location>{path}</location>')
+        if skill.always_load_content and skill.body:
+            lines.append(f'    <content>')
+            lines.append(f'      {xml_escape(skill.body)}')
+            lines.append(f'    </content>')
         lines.append(f'  </skill>')
 
     lines.append("</available_skills>")
@@ -147,7 +151,7 @@ def _parse_skill_md(skill_md: Path) -> SkillMeta | None:
         logger.warning("Cannot read %s: %s", skill_md, e)
         return None
 
-    meta, _ = _extract_frontmatter(content)
+    meta, body = _extract_frontmatter(content)
     if meta is None:
         logger.warning("Unparseable frontmatter in %s, skipped", skill_md)
         return None
@@ -162,10 +166,14 @@ def _parse_skill_md(skill_md: Path) -> SkillMeta | None:
         logger.warning("%s has no description, skipped (description is required for catalog)", skill_md)
         return None
 
+    always_load = bool(meta.get("always_load_content", False))
+
     return SkillMeta(
         name=str(name).strip(),
         description=str(description).strip(),
         location=skill_md.resolve(),
+        always_load_content=always_load,
+        body=body if always_load else "",
     )
 
 

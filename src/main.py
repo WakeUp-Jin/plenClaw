@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import shutil
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 
-from config.settings import settings
+from config.settings import settings, get_pineclaw_home
 from utils.logger import logger, set_log_level
 
 from core.llm.registry import LLMServiceRegistry
@@ -23,6 +25,7 @@ from core.tool.feishu.client import FeishuClient
 from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
 from core.agent.agent import Agent
+from scheduler.memory_updater import MemoryUpdateScheduler
 
 from storage.short_memory_store import ShortMemoryStore
 from storage.memory_store import LocalMemoryStore
@@ -34,8 +37,11 @@ from api.app import create_app
 from api.routes.chat import set_agent
 from api.routes.card_callback import set_approval_store
 
+_memory_scheduler: MemoryUpdateScheduler | None = None
+
 
 async def startup() -> None:
+    global _memory_scheduler
     logger.info("=== PineClaw starting ===")
 
     set_log_level(settings.log_level)
@@ -58,29 +64,33 @@ async def startup() -> None:
     register_feishu_tools(tool_manager, feishu_client)
     logger.info("External tools registered: %d tools", len(tool_manager.list_tools()))
 
-    # 4. Local Memory Store
+    # 4. Local Memory Store (4 files under skills/memory/long_term/)
     memory_store = LocalMemoryStore(base_dir=str(settings.long_term_dir))
     register_memory_tools(tool_manager, memory_store)
     logger.info("Memory tools registered, total: %d tools", len(tool_manager.list_tools()))
 
-    # 5. Context modules
+    # 5. Short-term memory store (daily .jsonl under skills/memory/short_term/)
     short_memory_storage = ShortMemoryStore(base_dir=settings.short_term_dir)
-    logger.info(
-        "ShortMemoryStore initialized: dir=%s, active=%s",
-        settings.short_term_dir,
-        short_memory_storage.active_dir.name,
-    )
+    logger.info("ShortMemoryStore initialized: dir=%s", settings.short_term_dir)
+
+    # 6. Context modules
+    high_model = settings.get_model_config("high")
 
     compressor = ContextCompressor()
-    short_term = ShortTermMemoryContext(storage=short_memory_storage, compressor=compressor)
+    short_term = ShortTermMemoryContext(
+        storage=short_memory_storage,
+        compressor=compressor,
+        context_window=high_model.context_window,
+        initial_load_ratio=settings.initial_load_ratio,
+    )
     long_term = LongTermMemoryContext(memory_store=memory_store)
     system_prompt = SystemPromptContext()
 
-    high_model = settings.get_model_config("high")
     compression_config = CompressionConfig(
         context_window=high_model.context_window,
         compression_threshold=settings.compression_threshold,
         compress_keep_ratio=settings.compress_keep_ratio,
+        initial_load_ratio=settings.initial_load_ratio,
     )
 
     context_manager = ContextManager(
@@ -115,7 +125,26 @@ async def startup() -> None:
     set_agent(agent)
     logger.info("Agent created")
 
-    # 9. Feishu Channel
+    # 9. Memory update scheduler (daily LTM updates at configured time)
+    _memory_scheduler = MemoryUpdateScheduler(
+        llm_low=llm_registry.get_low(),
+        memory_store=memory_store,
+        short_memory_store=short_memory_storage,
+        update_log_dir=settings.update_log_dir,
+        schedule_time=settings.memory_update_schedule,
+    )
+    await _memory_scheduler.start()
+
+    # 10. Clean up old memory directory (migrated to skills/memory/)
+    old_memory_dir = get_pineclaw_home() / "memory"
+    if old_memory_dir.is_dir():
+        try:
+            shutil.rmtree(old_memory_dir)
+            logger.info("Removed legacy memory directory: %s", old_memory_dir)
+        except Exception as e:
+            logger.warning("Failed to remove legacy memory dir: %s", e)
+
+    # 11. Feishu Channel
     async def on_message(text: str, chat_id: str, open_id: str) -> str:
         return await agent.run(text, chat_id, open_id)
 
@@ -128,7 +157,7 @@ async def startup() -> None:
     register_channel(channel)
     logger.info("FeishuChannel connected (p2p single-chat)")
 
-    # 10. Inject send_card callback into Scheduler
+    # 12. Inject send_card callback into Scheduler
     async def send_card(chat_id: str, card_json: str) -> None:
         await channel.send_message(chat_id, card_json, msg_type="interactive")
 
@@ -139,7 +168,11 @@ async def startup() -> None:
 
 
 async def shutdown() -> None:
+    global _memory_scheduler
     logger.info("=== PineClaw shutting down ===")
+
+    if _memory_scheduler:
+        await _memory_scheduler.stop()
 
     channels = get_all_channels()
     for name, channel in channels.items():

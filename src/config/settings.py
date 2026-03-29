@@ -75,8 +75,14 @@ _DEFAULT_CONFIG_TEMPLATE: dict[str, Any] = {
     },
     "memory": {
         "short_term": {
-            "compression_threshold": 0.8,
+            "compression_threshold": 0.85,
             "compress_keep_ratio": 0.3,
+            "initial_load_ratio": 0.60,
+        },
+        "long_term": {
+            "update_schedule": "23:30",
+            "max_file_size_tokens": 3000,
+            "enable_diff_check": True,
         },
     },
     "retry": {
@@ -103,9 +109,10 @@ def ensure_pineclaw_dirs() -> Path:
     dirs = [
         home,
         home / "skills",
-        home / "memory",
-        home / "memory" / "short_term",
-        home / "memory" / "long_term",
+        home / "skills" / "memory",
+        home / "skills" / "memory" / "long_term",
+        home / "skills" / "memory" / "short_term",
+        home / "skills" / "memory" / "update_logs",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -114,12 +121,6 @@ def ensure_pineclaw_dirs() -> Path:
     if not config_path.is_file():
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(_DEFAULT_CONFIG_TEMPLATE, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-
-    state_path = home / "memory" / "short_term" / "state.json"
-    if not state_path.is_file():
-        with open(state_path, "w", encoding="utf-8") as f:
-            json.dump({"active_folder": "", "created_at": ""}, f, indent=2)
             f.write("\n")
 
     return home
@@ -214,13 +215,22 @@ class RetryConfig:
 
 @dataclass
 class ShortTermMemoryConfig:
-    compression_threshold: float = 0.8
+    compression_threshold: float = 0.85
     compress_keep_ratio: float = 0.3
+    initial_load_ratio: float = 0.60
+
+
+@dataclass
+class LongTermMemoryConfig:
+    update_schedule: str = "23:30"
+    max_file_size_tokens: int = 3000
+    enable_diff_check: bool = True
 
 
 @dataclass
 class MemoryConfig:
     short_term: ShortTermMemoryConfig = field(default_factory=ShortTermMemoryConfig)
+    long_term: LongTermMemoryConfig = field(default_factory=LongTermMemoryConfig)
 
 
 @dataclass
@@ -270,11 +280,23 @@ class AppConfig:
 
     @property
     def short_term_dir(self) -> Path:
-        return get_pineclaw_home() / "memory" / "short_term"
+        return get_pineclaw_home() / "skills" / "memory" / "short_term"
 
     @property
     def long_term_dir(self) -> Path:
-        return get_pineclaw_home() / "memory" / "long_term"
+        return get_pineclaw_home() / "skills" / "memory" / "long_term"
+
+    @property
+    def update_log_dir(self) -> Path:
+        return get_pineclaw_home() / "skills" / "memory" / "update_logs"
+
+    @property
+    def memory_update_schedule(self) -> str:
+        return self.memory.long_term.update_schedule
+
+    @property
+    def initial_load_ratio(self) -> float:
+        return self.memory.short_term.initial_load_ratio
 
     @property
     def compression_threshold(self) -> float:
@@ -306,6 +328,7 @@ def _build_config(raw: dict[str, Any]) -> AppConfig:
     retry_raw = raw.get("retry", {})
     memory_raw = raw.get("memory", {})
     st_raw = memory_raw.get("short_term", {})
+    lt_raw = memory_raw.get("long_term", {})
 
     models: dict[str, ModelConfig] = {}
     for tier_name, tier_raw in raw.get("models", {}).items():
@@ -316,7 +339,10 @@ def _build_config(raw: dict[str, Any]) -> AppConfig:
     return AppConfig(
         app=AppSection(**app_raw),
         models=models,
-        memory=MemoryConfig(short_term=ShortTermMemoryConfig(**st_raw)),
+        memory=MemoryConfig(
+            short_term=ShortTermMemoryConfig(**st_raw),
+            long_term=LongTermMemoryConfig(**lt_raw),
+        ),
         retry=RetryConfig(**retry_raw),
         feishu=FeishuConfig(**feishu_raw),
     )

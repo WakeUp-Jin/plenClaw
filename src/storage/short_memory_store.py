@@ -1,209 +1,202 @@
-"""Time-folder based short-term memory storage.
+"""Daily-file based short-term memory storage.
 
 File layout::
 
-    ~/.pineclaw/memory/short_term/
-        state.json                          <- active folder pointer
-        20260325_143022/                    <- archived segment
-            history.jsonl                   <- raw ContextItem dicts
-            checkpoint.json                 <- compression summary
-        20260325_160000/                    <- active segment
-            history.jsonl
+    ~/.pineclaw/skills/memory/short_term/
+        state.json
+        2026-03/
+            2026-03-29.jsonl          <- today's raw ContextItem dicts
+            2026-03-28.jsonl
+            week_03-17_to_03-23.summary.md
+        2026-02/
+            month_2026-02.summary.md
+            2026-02-28.jsonl
+        year_2025.summary.md
 """
 
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import re
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from storage.base import IContextStorage
 from utils.logger import logger
 
-HISTORY_FILE = "history.jsonl"
-CHECKPOINT_FILE = "checkpoint.json"
-STATE_FILE = "state.json"
-
 
 class ShortMemoryStore(IContextStorage):
-    """Append-only JSONL storage organised into time-stamped folders.
-
-    Each folder represents a memory segment.  When compression happens the
-    current folder gets a ``checkpoint.json`` and a new folder is created
-    for fresh records.
-    """
+    """Append-only JSONL storage organised into daily files within monthly folders."""
 
     def __init__(self, base_dir: str | Path) -> None:
         self._base_dir = Path(base_dir)
         self._base_dir.mkdir(parents=True, exist_ok=True)
-        self._active_dir: Path = self._resolve_active_dir()
+        self._today: date = date.today()
+        self._ensure_today_file()
 
     @property
-    def active_dir(self) -> Path:
-        return self._active_dir
+    def base_dir(self) -> Path:
+        return self._base_dir
 
     # ------------------------------------------------------------------
-    # IContextStorage implementation
+    # Write
     # ------------------------------------------------------------------
 
     def append(self, message: dict[str, Any]) -> None:
-        history = self._active_dir / HISTORY_FILE
+        today = date.today()
+        if today != self._today:
+            self._today = today
+            self._ensure_today_file()
+
+        path = self.get_daily_path(today)
         try:
-            with open(history, "a", encoding="utf-8") as f:
+            with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(message, ensure_ascii=False) + "\n")
         except Exception as e:
-            logger.error("ShortMemoryStore: failed to append: %s", e)
+            logger.error("ShortMemoryStore.append failed: %s", e)
 
-    def load_all(self) -> list[dict[str, Any]]:
-        return self._read_jsonl(self._active_dir / HISTORY_FILE)
-
-    def load_from_line(self, line_number: int) -> list[dict[str, Any]]:
-        history = self._active_dir / HISTORY_FILE
-        messages: list[dict[str, Any]] = []
+    def save_summary(self, path: Path, content: str) -> None:
+        """Write a summary file (.summary.md) to disk."""
+        path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(history, "r", encoding="utf-8") as f:
-                for i, line in enumerate(f):
-                    if i >= line_number:
-                        line = line.strip()
-                        if line:
-                            messages.append(json.loads(line))
-        except FileNotFoundError:
-            pass
+            path.write_text(content, encoding="utf-8")
+            logger.info("Summary saved: %s (%d chars)", path.name, len(content))
         except Exception as e:
-            logger.error("ShortMemoryStore: load_from_line failed: %s", e)
-        return messages
+            logger.error("Failed to save summary %s: %s", path, e)
 
-    def count_lines(self) -> int:
-        history = self._active_dir / HISTORY_FILE
+    # ------------------------------------------------------------------
+    # Read
+    # ------------------------------------------------------------------
+
+    def load_today(self) -> list[dict[str, Any]]:
+        return self._read_jsonl(self.get_daily_path(date.today()))
+
+    def load_daily(self, d: date) -> list[dict[str, Any]]:
+        return self._read_jsonl(self.get_daily_path(d))
+
+    def count_today_lines(self) -> int:
+        path = self.get_daily_path(date.today())
         try:
-            with open(history, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 return sum(1 for line in f if line.strip())
         except FileNotFoundError:
             return 0
         except Exception:
             return 0
 
-    def save_checkpoint(self, summary: str, checkpoint_line: int) -> None:
-        total = self.count_lines()
-        data = {
-            "summary": summary,
-            "compressed_lines": checkpoint_line,
-            "kept_from_line": checkpoint_line,
-            "total_lines": total,
-            "archive_hint": (
-                f"完整原始记录保存在 {self._active_dir.name}/{HISTORY_FILE} "
-                f"前 {checkpoint_line} 行"
-            ),
-            "created_at": datetime.now().isoformat(),
-        }
-        cp_path = self._active_dir / CHECKPOINT_FILE
+    def read_summary(self, path: Path) -> str:
+        """Read a summary file's text content."""
         try:
-            with open(cp_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-            logger.info(
-                "Checkpoint saved: %s (compressed %d / %d lines)",
-                self._active_dir.name, checkpoint_line, total,
-            )
+            return path.read_text(encoding="utf-8")
         except Exception as e:
-            logger.error("ShortMemoryStore: save_checkpoint failed: %s", e)
-
-    def load_checkpoint(self) -> dict[str, Any] | None:
-        cp_path = self._active_dir / CHECKPOINT_FILE
-        if not cp_path.exists():
-            return None
-        try:
-            with open(cp_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error("ShortMemoryStore: load_checkpoint failed: %s", e)
-            return None
-
-    def rotate(self) -> Path:
-        """Archive the current segment and start a new one.
-
-        Called after compression.  Returns the new active directory.
-        """
-        new_dir = self._create_segment_dir()
-        self._active_dir = new_dir
-        self._save_state(new_dir.name)
-        logger.info("Memory segment rotated -> %s", new_dir.name)
-        return new_dir
+            logger.error("Failed to read summary %s: %s", path, e)
+            return ""
 
     # ------------------------------------------------------------------
-    # Segment listing (for tools that retrieve archived memory)
+    # Path helpers
     # ------------------------------------------------------------------
 
-    def list_segments(self) -> list[Path]:
-        """Return all segment folders sorted by name (oldest first)."""
-        return sorted(
-            [d for d in self._base_dir.iterdir() if d.is_dir()],
-            key=lambda p: p.name,
-        )
+    def get_daily_path(self, d: date) -> Path:
+        month_dir = self._base_dir / d.strftime("%Y-%m")
+        return month_dir / f"{d.isoformat()}.jsonl"
 
-    def load_segment_checkpoint(self, segment_name: str) -> dict[str, Any] | None:
-        cp = self._base_dir / segment_name / CHECKPOINT_FILE
-        if not cp.exists():
-            return None
-        try:
-            with open(cp, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return None
+    def get_month_dir(self, d: date) -> Path:
+        return self._base_dir / d.strftime("%Y-%m")
 
     # ------------------------------------------------------------------
-    # Internal helpers
+    # Listing
     # ------------------------------------------------------------------
 
-    def _resolve_active_dir(self) -> Path:
-        """Read state.json to find active folder, or create one."""
-        state = self._load_state()
-        active_name = state.get("active_folder", "")
+    def list_month_dirs(self) -> list[Path]:
+        """All month directories sorted oldest first."""
+        dirs = [
+            d for d in self._base_dir.iterdir()
+            if d.is_dir() and re.match(r"\d{4}-\d{2}$", d.name)
+        ]
+        return sorted(dirs, key=lambda p: p.name)
 
-        if active_name:
-            active = self._base_dir / active_name
-            if active.is_dir():
-                logger.info("ShortMemoryStore: active segment = %s", active_name)
-                return active
-            logger.warning(
-                "ShortMemoryStore: state points to %s but it doesn't exist, creating new",
-                active_name,
-            )
+    def list_daily_files(self, month_dir: Path) -> list[Path]:
+        """All .jsonl files in a month directory, sorted oldest first."""
+        return sorted(month_dir.glob("*.jsonl"), key=lambda p: p.name)
 
-        return self._create_segment_dir()
+    def list_summaries(self, month_dir: Path) -> list[Path]:
+        """All .summary.md files in a month directory."""
+        return sorted(month_dir.glob("*.summary.md"), key=lambda p: p.name)
 
-    def _create_segment_dir(self) -> Path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        d = self._base_dir / ts
-        d.mkdir(parents=True, exist_ok=True)
-        (d / HISTORY_FILE).touch()
-        self._save_state(ts)
-        logger.info("ShortMemoryStore: created segment %s", ts)
-        return d
+    def list_year_summaries(self) -> list[Path]:
+        """Year summary files in the base directory."""
+        return sorted(self._base_dir.glob("year_*.summary.md"), key=lambda p: p.name)
 
-    def _load_state(self) -> dict[str, Any]:
-        state_path = self._base_dir / STATE_FILE
-        if not state_path.exists():
-            return {}
-        try:
-            with open(state_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
+    def get_all_dates_descending(self) -> list[date]:
+        """Return all dates that have .jsonl files, newest first."""
+        dates: list[date] = []
+        for month_dir in reversed(self.list_month_dirs()):
+            for f in reversed(self.list_daily_files(month_dir)):
+                try:
+                    dates.append(date.fromisoformat(f.stem))
+                except ValueError:
+                    continue
+        return dates
 
-    def _save_state(self, folder_name: str) -> None:
-        state_path = self._base_dir / STATE_FILE
-        data = {
-            "active_folder": folder_name,
-            "created_at": datetime.now().isoformat(),
-        }
-        try:
-            with open(state_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-        except Exception as e:
-            logger.error("ShortMemoryStore: _save_state failed: %s", e)
+    def is_covered_by_summary(self, d: date, summaries: list[Path]) -> bool:
+        """Check if a date falls within any week or month summary's range."""
+        for s in summaries:
+            name = s.name.replace(".summary.md", "")
+
+            if name.startswith("week_"):
+                parts = name.replace("week_", "").split("_to_")
+                if len(parts) == 2:
+                    try:
+                        year = d.year
+                        start = date(year, int(parts[0][:2]), int(parts[0][3:]))
+                        end = date(year, int(parts[1][:2]), int(parts[1][3:]))
+                        if start <= d <= end:
+                            return True
+                    except (ValueError, IndexError):
+                        continue
+
+            elif name.startswith("month_"):
+                month_str = name.replace("month_", "")
+                if d.strftime("%Y-%m") == month_str:
+                    return True
+
+        return False
+
+    def find_covering_summary(self, d: date, summaries: list[Path]) -> Path | None:
+        """Return the summary file that covers this date, or None."""
+        for s in summaries:
+            name = s.name.replace(".summary.md", "")
+
+            if name.startswith("week_"):
+                parts = name.replace("week_", "").split("_to_")
+                if len(parts) == 2:
+                    try:
+                        year = d.year
+                        start = date(year, int(parts[0][:2]), int(parts[0][3:]))
+                        end = date(year, int(parts[1][:2]), int(parts[1][3:]))
+                        if start <= d <= end:
+                            return s
+                    except (ValueError, IndexError):
+                        continue
+
+            elif name.startswith("month_"):
+                month_str = name.replace("month_", "")
+                if d.strftime("%Y-%m") == month_str:
+                    return s
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Internal
+    # ------------------------------------------------------------------
+
+    def _ensure_today_file(self) -> None:
+        path = self.get_daily_path(self._today)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            path.touch()
+            logger.debug("Created daily file: %s", path.name)
 
     @staticmethod
     def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -217,5 +210,5 @@ class ShortMemoryStore(IContextStorage):
         except FileNotFoundError:
             pass
         except Exception as e:
-            logger.error("ShortMemoryStore: _read_jsonl failed on %s: %s", path, e)
+            logger.error("_read_jsonl failed on %s: %s", path, e)
         return messages
