@@ -16,7 +16,7 @@ from lark_oapi.api.im.v1 import (
 )
 
 from channels.feishu.event_handler import parse_message_event
-from utils import logger
+from utils.logger import logger
 
 
 class FeishuChannel:

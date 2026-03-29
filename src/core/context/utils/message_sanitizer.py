@@ -32,44 +32,55 @@ def sanitize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     2. A tool message whose ``tool_call_id`` does not appear in any preceding
        assistant ``tool_calls`` is removed.
     """
-    removed: set[int] = set()
+    removed_message_indices: set[int] = set()
 
     # Map every tool_call id -> index of the assistant message that owns it
-    call_id_to_assistant: dict[str, int] = {}
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            for tc in msg["tool_calls"]:
-                tc_id = tc.get("id")
-                if tc_id:
-                    call_id_to_assistant[tc_id] = i
+    assistant_call_owner_by_id: dict[str, int] = {}
+    for message_index, message in enumerate(messages):
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            for tool_call in message["tool_calls"]:
+                tool_call_id = tool_call.get("id")
+                if tool_call_id:
+                    assistant_call_owner_by_id[tool_call_id] = message_index
 
     # Collect ids that have a tool response
-    response_ids: set[str] = set()
-    for msg in messages:
-        if msg.get("role") == "tool" and msg.get("tool_call_id"):
-            response_ids.add(msg["tool_call_id"])
+    responded_call_ids: set[str] = set()
+    tool_message_indices_by_call_id: dict[str, set[int]] = {}
+    for message_index, message in enumerate(messages):
+        if message.get("role") == "tool" and message.get("tool_call_id"):
+            tool_call_id = message["tool_call_id"]
+            responded_call_ids.add(tool_call_id)
+            tool_message_indices_by_call_id.setdefault(tool_call_id, set()).add(message_index)
 
     # Rule 1: remove assistant messages with incomplete responses
-    for i, msg in enumerate(messages):
-        if msg.get("role") != "assistant" or not msg.get("tool_calls"):
+    for message_index, message in enumerate(messages):
+        if message.get("role") != "assistant" or not message.get("tool_calls"):
             continue
-        all_responded = all(tc.get("id") in response_ids for tc in msg["tool_calls"])
+        all_responded = all(
+            tool_call.get("id") in responded_call_ids
+            for tool_call in message["tool_calls"]
+        )
         if not all_responded:
-            removed.add(i)
-            for tc in msg["tool_calls"]:
-                tc_id = tc.get("id")
-                if tc_id:
-                    for j, m2 in enumerate(messages):
-                        if m2.get("role") == "tool" and m2.get("tool_call_id") == tc_id:
-                            removed.add(j)
+            removed_message_indices.add(message_index)
+            for tool_call in message["tool_calls"]:
+                tool_call_id = tool_call.get("id")
+                if tool_call_id:
+                    # update的方法就是把另外一个set集合的元素添加到当前集合中，而不是替换
+                    removed_message_indices.update(
+                        tool_message_indices_by_call_id.get(tool_call_id, set())
+                    )
 
     # Rule 2: remove orphaned tool messages
-    for i, msg in enumerate(messages):
-        if msg.get("role") == "tool" and msg.get("tool_call_id"):
-            if msg["tool_call_id"] not in call_id_to_assistant:
-                removed.add(i)
+    for message_index, message in enumerate(messages):
+        if message.get("role") == "tool" and message.get("tool_call_id"):
+            if message["tool_call_id"] not in assistant_call_owner_by_id:
+                removed_message_indices.add(message_index)
 
-    return [m for i, m in enumerate(messages) if i not in removed]
+    return [
+        message
+        for message_index, message in enumerate(messages)
+        if message_index not in removed_message_indices
+    ]
 
 
 def validate_messages(messages: list[dict[str, Any]]) -> ValidationResult:

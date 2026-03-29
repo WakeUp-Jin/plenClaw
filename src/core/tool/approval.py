@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 from typing import Literal
 
-from utils import logger
+from utils.logger import logger
 
 ApprovalOutcome = Literal["approve", "cancel", "timeout"]
 

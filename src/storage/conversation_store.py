@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from storage.base import IContextStorage, IStorage
-from utils import logger
+from utils.logger import logger
 
 FILE_PREFIX = "conv_"
 JSONL_SUFFIX = ".jsonl"

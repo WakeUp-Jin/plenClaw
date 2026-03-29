@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from storage.base import IContextStorage
-from utils import logger
+from utils.logger import logger
 
 HISTORY_FILE = "history.jsonl"
 CHECKPOINT_FILE = "checkpoint.json"

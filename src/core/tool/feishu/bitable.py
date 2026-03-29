@@ -24,7 +24,7 @@ from lark_oapi.api.bitable.v1 import (
 )
 
 from core.tool.feishu.client import FeishuClient
-from utils import logger
+from utils.logger import logger
 
 
 # ===========================================================================

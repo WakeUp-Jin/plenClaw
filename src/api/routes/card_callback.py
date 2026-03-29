@@ -19,7 +19,7 @@ from typing import Any
 
 from fastapi import APIRouter, Request
 
-from utils import logger
+from utils.logger import logger
 
 router = APIRouter()
 

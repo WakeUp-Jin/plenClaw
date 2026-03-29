@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from channels.types import IChannel
-from utils import logger
+from utils.logger import logger
 
 _registry: dict[str, IChannel] = {}
 

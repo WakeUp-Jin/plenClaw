@@ -61,7 +61,7 @@ class Agent:
         )
         self._ctx.append_item(user_item)
         
-        # 标记对话开始
+        # 标记本次对话开始，设计两次是为了保护截点的完整性
         self._ctx.short_term_memory.mark_turn_start()
 
         # 获取上下文、工具、获取上下文
