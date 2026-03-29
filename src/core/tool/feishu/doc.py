@@ -21,7 +21,7 @@ from lark_oapi.api.docx.v1 import (
 )
 
 from core.tool.feishu.client import FeishuClient
-from utils import logger
+from utils.logger import logger
 
 _BLOCK_TYPE_MAP = {
     "paragraph": 2,

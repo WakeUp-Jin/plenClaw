@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Awaitable
 
-from utils import logger
+from utils.logger import logger
 
 _seen_message_ids: set[str] = set()
 MAX_SEEN = 1000

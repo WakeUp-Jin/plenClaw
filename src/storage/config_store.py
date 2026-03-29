@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from utils import logger
+from utils.logger import logger
 
 
 class ConfigStore:

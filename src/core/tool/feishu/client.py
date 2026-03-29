@@ -5,7 +5,7 @@ from typing import Any
 
 import lark_oapi as lark
 
-from utils import logger
+from utils.logger import logger
 
 
 class FeishuClient:

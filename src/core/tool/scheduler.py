@@ -20,7 +20,7 @@ from core.tool.types import (
     ToolCallStatus,
 )
 from core.tool.approval import ApprovalStore, ApprovalOutcome
-from utils import logger
+from utils.logger import logger
 
 if TYPE_CHECKING:
     from core.tool.manager import ToolManager

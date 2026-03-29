@@ -15,7 +15,7 @@ from lark_oapi.api.im.v1 import (
 )
 
 from core.tool.feishu.client import FeishuClient
-from utils import logger
+from utils.logger import logger
 
 
 feishu_message_def = {

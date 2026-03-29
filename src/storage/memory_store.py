@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from storage.base import IStorage
-from utils import logger
+from utils.logger import logger
 
 MEMORY_FILE = "memory.md"
 

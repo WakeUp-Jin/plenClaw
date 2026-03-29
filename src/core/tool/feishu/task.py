@@ -10,7 +10,7 @@ import lark_oapi as lark
 from lark_oapi.api.task.v2 import *
 
 from core.tool.feishu.client import FeishuClient
-from utils import logger
+from utils.logger import logger
 
 
 feishu_task_def = {

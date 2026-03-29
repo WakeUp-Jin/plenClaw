@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
-from utils import logger
+from utils.logger import logger
 
 
 class IStorage:

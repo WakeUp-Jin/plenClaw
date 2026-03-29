@@ -9,7 +9,7 @@ import lark_oapi as lark
 from lark_oapi.api.drive.v1 import *
 
 from core.tool.feishu.client import FeishuClient
-from utils import logger
+from utils.logger import logger
 
 
 feishu_drive_def = {

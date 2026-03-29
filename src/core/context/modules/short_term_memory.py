@@ -25,7 +25,7 @@ from core.context.types import (
 from core.context.utils.compressor import ContextCompressor
 from core.context.utils.message_sanitizer import sanitize_messages
 from core.context.utils.token_estimator import TokenEstimator
-from utils import logger
+from utils.logger import logger
 
 
 class ShortTermMemoryContext(BaseContext[ContextItem]):
@@ -209,6 +209,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
             self._items = [ContextItem.from_dict(d) for d in raw]
             logger.info("Loaded memory: %d items (no checkpoint)", len(self._items))
 
+        # 在加载内存时，需要进行消息清理，以确保消息序列的完整性
         self._sanitize_on_load()
         self._turn_start = len(self._items)
 
