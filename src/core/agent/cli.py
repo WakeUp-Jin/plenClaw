@@ -34,13 +34,14 @@ def _build_agent() -> Agent:
     llm_registry = LLMServiceRegistry(settings)
 
     tool_manager = ToolManager()
+    high_model = settings.get_model_config("high")
 
     short_memory_storage = ShortMemoryStore(base_dir=settings.short_term_dir)
     compressor = ContextCompressor()
-    short_term = ShortTermMemoryContext(storage=short_memory_storage, compressor=compressor)
+    short_term = ShortTermMemoryContext(storage=short_memory_storage, compressor=compressor,context_window=high_model.context_window)
     system_prompt = SystemPromptContext()
 
-    high_model = settings.get_model_config("high")
+
     compression_config = CompressionConfig(
         context_window=high_model.context_window,
         compression_threshold=settings.compression_threshold,
