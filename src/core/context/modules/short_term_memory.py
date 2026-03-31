@@ -147,33 +147,51 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
     # ------------------------------------------------------------------
 
     def _load_memory(self) -> None:
-        """Load from disk based on token budget, newest to oldest."""
+        """Load from disk based on token budget, newest to oldest.
+
+        加载策略（按优先级从高到低）：
+        1. 首先尝试加载日期的摘要（周摘要/月摘要），避免重复加载原始数据
+        2. 如果没有摘要覆盖，则加载该日期的原始 .jsonl 文件
+        3. 最后加载年摘要（独立的年度总结文件）
+
+        注意：加载顺序是从新到旧，但最终会反转成从早到晚的顺序存入内存，
+        保证对话历史的时序正确性。
+        """
+        # 清空现有内存
         self._items.clear()
         self._loaded_summaries.clear()
         self._intra_day_summary = ""
 
+        # 计算 token 预算（根据上下文窗口和初始加载比例）
         budget = int(self._context_window * self._initial_load_ratio)
         used = 0
 
+        # 获取所有存在记忆文件的日期（从新到旧）
         all_dates = self._storage.get_all_dates_descending()
         if not all_dates:
             logger.info("No short-term memory files found")
             self._turn_start = 0
             return
 
-        to_load_items: list[tuple[str, list[ContextItem]]] = []
-        to_load_summaries: list[tuple[str, str]] = []
-        loaded_summary_names: set[str] = set()
+        # 暂存要加载的数据，避免中途修改 self._items
+        to_load_items: list[tuple[str, list[ContextItem]]] = []      # (日期标签, 原始消息列表)
+        to_load_summaries: list[tuple[str, str]] = []                # (摘要标签, 摘要文本)
+        loaded_summary_names: set[str] = set()                       # 已加载的摘要文件名（去重）
 
+        # ------------------------------------------------------------------
+        # 第一阶段：遍历所有日期，加载摘要或原始数据
+        # ------------------------------------------------------------------
         for d in all_dates:
             if used >= budget:
                 break
 
+            # 检查该日期是否被某个摘要文件覆盖
             month_dir = self._storage.get_month_dir(d)
             summaries = self._storage.list_summaries(month_dir)
             covering = self._storage.find_covering_summary(d, summaries)
 
             if covering and covering.name not in loaded_summary_names:
+                # 情况1：有摘要覆盖且未加载过，加载该摘要
                 text = self._storage.read_summary(covering)
                 if text:
                     tokens = TokenEstimator.estimate_text(text)
@@ -184,8 +202,10 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
                         used += tokens
                 continue
             elif covering:
+                # 情况2：有摘要覆盖但已加载过，跳过该日期
                 continue
 
+            # 情况3：无摘要覆盖，加载该日期的原始数据
             raw = self._storage.load_daily(d)
             if not raw:
                 continue
@@ -198,6 +218,9 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
             else:
                 break
 
+        # ------------------------------------------------------------------
+        # 第二阶段：加载年摘要（独立于日期的年度总结）
+        # ------------------------------------------------------------------
         for ys in self._storage.list_year_summaries():
             if used >= budget:
                 break
@@ -209,14 +232,21 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
                     to_load_summaries.append((label, text))
                     used += tokens
 
+        # ------------------------------------------------------------------
+        # 第三阶段：按时间顺序合并数据（从早到晚）
+        # ------------------------------------------------------------------
+        # 由于遍历是从新到旧，需要反转成从早到晚的时序
         to_load_items.reverse()
         to_load_summaries.reverse()
 
+        # 将暂存的数据写入实际内存
         for _, items in to_load_items:
             self._items.extend(items)
         self._loaded_summaries = to_load_summaries
 
+        # 清理不完整的消息（如工具调用缺少响应等）
         self._sanitize_on_load()
+        # 标记当前轮次的起始位置（之前的都是历史）
         self._turn_start = len(self._items)
 
         logger.info(
