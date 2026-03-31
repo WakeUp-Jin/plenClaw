@@ -156,6 +156,7 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
 
         注意：加载顺序是从新到旧，但最终会反转成从早到晚的顺序存入内存，
         保证对话历史的时序正确性。
+        
         """
         # 清空现有内存
         self._items.clear()
