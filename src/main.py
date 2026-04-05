@@ -21,8 +21,6 @@ from core.tool.manager import ToolManager
 from core.tool.scheduler import ToolScheduler, ToolSchedulerConfig
 from core.tool.approval import ApprovalStore
 from core.tool.types import ApprovalMode
-from core.tool.feishu.client import FeishuClient
-from core.tool.feishu import register_feishu_tools
 from core.tool.memory_tools import register_memory_tools
 from core.agent.agent import Agent
 from scheduler.memory_updater import MemoryUpdateScheduler
@@ -46,34 +44,25 @@ async def startup() -> None:
 
     set_log_level(settings.log_level)
 
-    # 1. Feishu Client
-    feishu_client = FeishuClient(
-        app_id=settings.feishu_app_id,
-        app_secret=settings.feishu_app_secret,
-    )
-    logger.info("FeishuClient created")
-
-    # 2. LLM Service Registry
+    # 1. LLM Service Registry
     llm_registry = LLMServiceRegistry(settings)
     llm_registry.get_high()
     llm_registry.get_low()
     logger.info("LLMServiceRegistry initialized (HIGH + LOW preloaded)")
 
-    # 3. Tool Manager + register external tools (feishu)
+    # 2. Tool Manager
     tool_manager = ToolManager()
-    register_feishu_tools(tool_manager, feishu_client)
-    logger.info("External tools registered: %d tools", len(tool_manager.list_tools()))
 
-    # 4. Local Memory Store (4 files under skills/memory/long_term/)
+    # 3. Local Memory Store (4 files under skills/memory/long_term/)
     memory_store = LocalMemoryStore(base_dir=str(settings.long_term_dir))
     register_memory_tools(tool_manager, memory_store)
     logger.info("Memory tools registered, total: %d tools", len(tool_manager.list_tools()))
 
-    # 5. Short-term memory store (daily .jsonl under skills/memory/short_term/)
+    # 4. Short-term memory store (daily .jsonl under skills/memory/short_term/)
     short_memory_storage = ShortMemoryStore(base_dir=settings.short_term_dir)
     logger.info("ShortMemoryStore initialized: dir=%s", settings.short_term_dir)
 
-    # 6. Context modules
+    # 5. Context modules
     high_model = settings.get_model_config("high")
 
     compressor = ContextCompressor()
@@ -101,7 +90,7 @@ async def startup() -> None:
     )
     logger.info("ContextManager created")
 
-    # 7. Approval Store + Tool Scheduler
+    # 6. Approval Store + Tool Scheduler
     approval_store = ApprovalStore()
     set_approval_store(approval_store)
 
@@ -115,7 +104,7 @@ async def startup() -> None:
     )
     logger.info("ToolScheduler created (mode=%s)", scheduler_config.approval_mode.value)
 
-    # 8. Agent
+    # 7. Agent
     agent = Agent(
         llm_registry=llm_registry,
         context_manager=context_manager,
@@ -125,7 +114,7 @@ async def startup() -> None:
     set_agent(agent)
     logger.info("Agent created")
 
-    # 9. Memory update scheduler (daily LTM updates at configured time)
+    # 8. Memory update scheduler (daily LTM updates at configured time)
     _memory_scheduler = MemoryUpdateScheduler(
         llm_low=llm_registry.get_low(),
         memory_store=memory_store,
@@ -135,7 +124,7 @@ async def startup() -> None:
     )
     await _memory_scheduler.start()
 
-    # 10. Clean up old memory directory (migrated to skills/memory/)
+    # 9. Clean up old memory directory (migrated to skills/memory/)
     old_memory_dir = get_pineclaw_home() / "memory"
     if old_memory_dir.is_dir():
         try:
@@ -144,7 +133,7 @@ async def startup() -> None:
         except Exception as e:
             logger.warning("Failed to remove legacy memory dir: %s", e)
 
-    # 11. Feishu Channel
+    # 10. Feishu Channel
     async def on_message(text: str, chat_id: str, open_id: str) -> str:
         return await agent.run(text, chat_id, open_id)
 
@@ -157,7 +146,7 @@ async def startup() -> None:
     register_channel(channel)
     logger.info("FeishuChannel connected (p2p single-chat)")
 
-    # 12. Inject send_card callback into Scheduler
+    # 11. Inject send_card callback into Scheduler
     async def send_card(chat_id: str, card_json: str) -> None:
         await channel.send_message(chat_id, card_json, msg_type="interactive")
 
