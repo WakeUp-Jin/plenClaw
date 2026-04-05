@@ -96,6 +96,12 @@ _DEFAULT_CONFIG_TEMPLATE: dict[str, Any] = {
         "verification_token": "${FEISHU_VERIFICATION_TOKEN}",
         "encrypt_key": "${FEISHU_ENCRYPT_KEY}",
     },
+    "tiangong": {
+        "agent_type": "codex",
+        "poll_interval": 900,
+        "workspace_dir": "/workspace",
+        "api_key": "${OPENAI_API_KEY}",
+    },
 }
 
 
@@ -113,6 +119,11 @@ def ensure_pineclaw_dirs() -> Path:
         home / "skills" / "memory" / "long_term",
         home / "skills" / "memory" / "short_term",
         home / "skills" / "memory" / "update_logs",
+        home / "tiangong",
+        home / "tiangong" / "orders",
+        home / "tiangong" / "orders" / "pending",
+        home / "tiangong" / "orders" / "processing",
+        home / "tiangong" / "orders" / "done",
     ]
     for d in dirs:
         d.mkdir(parents=True, exist_ok=True)
@@ -242,6 +253,15 @@ class FeishuConfig:
 
 
 @dataclass
+class TianGongConfig:
+    """天工模块配置。"""
+    agent_type: str = "codex"
+    poll_interval: int = 900
+    workspace_dir: str = "/workspace"
+    api_key: str = ""
+
+
+@dataclass
 class AppSection:
     log_level: str = "INFO"
 
@@ -255,6 +275,7 @@ class AppConfig:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     retry: RetryConfig = field(default_factory=RetryConfig)
     feishu: FeishuConfig = field(default_factory=FeishuConfig)
+    tiangong: TianGongConfig = field(default_factory=TianGongConfig)
 
     # ---- convenience properties ----
 
@@ -329,6 +350,7 @@ def _build_config(raw: dict[str, Any]) -> AppConfig:
     memory_raw = raw.get("memory", {})
     st_raw = memory_raw.get("short_term", {})
     lt_raw = memory_raw.get("long_term", {})
+    tiangong_raw = raw.get("tiangong", {})
 
     models: dict[str, ModelConfig] = {}
     for tier_name, tier_raw in raw.get("models", {}).items():
@@ -345,6 +367,7 @@ def _build_config(raw: dict[str, Any]) -> AppConfig:
         ),
         retry=RetryConfig(**retry_raw),
         feishu=FeishuConfig(**feishu_raw),
+        tiangong=TianGongConfig(**tiangong_raw),
     )
 
 
