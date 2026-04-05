@@ -23,6 +23,32 @@ class ToolManager:
         """注册一个 InternalTool 对象。"""
         self._tools[tool.name] = tool
         logger.debug("Registered tool: %s [%s]", tool.name, tool.category)
+
+    def register_legacy(
+        self,
+        name: str,
+        definition: dict[str, Any],
+        handler: Callable[[dict[str, Any]], Awaitable[ToolResult]],
+        category: str = "general",
+    ) -> None:
+        """兼容旧式 dict 定义的注册方式。
+
+        将原始 dict 格式（name/description/parameters）+ handler
+        转成 InternalTool 后注册。飞书工具等使用此方法。
+        """
+        params_raw = definition.get("parameters", {})
+        tool = InternalTool(
+            name=name,
+            category=category,
+            description=definition.get("description", ""),
+            parameters=ToolParameterSchema(
+                type=params_raw.get("type", "object"),
+                properties=params_raw.get("properties", {}),
+                required=params_raw.get("required", []),
+            ),
+            handler=handler,
+        )
+        self.register(tool)
     # ------------------------------------------------------------------
     # 查询
     # ------------------------------------------------------------------
