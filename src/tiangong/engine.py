@@ -28,7 +28,7 @@ _RE_FORGE_TYPE = re.compile(
     r"^-\s*锻造类型[：:]\s*(.+)", re.MULTILINE
 )
 _RE_ROLLOUT_PATH = re.compile(
-    r"^-\s*Codex\s*会话记录[：:]\s*(.+)", re.MULTILINE
+    r"^-\s*(?:Codex|Agent)\s*会话记录[：:]\s*(.+)", re.MULTILINE
 )
 
 
@@ -186,7 +186,7 @@ class TianGongEngine:
         提取:
         - tool_name: 从标题 ``# 锻造令：xxx`` 或 ``# 反馈重锻令：xxx``
         - forge_type: 从 ``- 锻造类型：xxx``，默认 ``首次``
-        - rollout_path: 从 ``- Codex 会话记录：xxx``（仅重锻令有）
+        - rollout_path: 从 ``- Agent 会话记录：xxx``（仅重锻令有，兼容旧格式 "Codex 会话记录"）
         """
         tool_name = "unknown-tool"
         m = _RE_TOOL_NAME.search(content)
@@ -287,7 +287,7 @@ class TianGongEngine:
             f"\n"
             f"- 源码：{tool_workspace}\n"
             f"- 锻造令：{order_path}\n"
-            f"- Codex 会话记录：{result.rollout_path or '未获取'}\n"
+            f"- Agent 会话记录：{result.rollout_path or '未获取'}\n"
             f"\n"
             f"## 锻造历史\n"
             f"\n"

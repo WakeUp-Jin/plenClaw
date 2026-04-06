@@ -11,15 +11,15 @@ TianGongFeedbackTool = InternalTool(
     category="tiangong",
     description=(
         "向天工反馈锻造工具的运行错误，请求重新锻造修复。"
-        "天工会在下次巡查时基于之前的锻造记录和 Codex 会话上下文进行修复。"
+        "天工会在下次巡查时基于之前的锻造记录和 Agent 会话上下文进行修复。"
         "仅在已锻造的工具运行出错、需要天工修复时使用。\n\n"
         "使用前请先读取 .heartclaw/tiangong/forge-logs/{tool_name}.md "
-        "获取该工具的源码路径、锻造令路径、Codex 会话记录路径等信息。\n\n"
+        "获取该工具的源码路径、锻造令路径、Agent 会话记录路径等信息。\n\n"
         "你需要自己编写完整的反馈重锻令 Markdown 内容传入 content 参数。"
         "重锻令必须以 `# 反馈重锻令：{tool_name}` 作为标题，"
         "并在元信息中包含 `- 锻造类型：重锻（error_feedback）`。"
         "内容应包含：错误信息、锻造记录中的相关文件路径、"
-        "Codex 会话记录路径（如有）、重锻流程说明。"
+        "Agent 会话记录路径（如有）、重锻流程说明。"
     ),
     parameters=ToolParameterSchema(
         type="object",

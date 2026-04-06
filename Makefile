@@ -6,6 +6,9 @@ bootstrap:
 
 up:
 	mkdir -p $${HOME}/.heartclaw/tiangong/codex
+	mkdir -p $${HOME}/.heartclaw/tiangong/kimi
+	mkdir -p $${HOME}/.heartclaw/tiangong/opencode
+	mkdir -p $${HOME}/.heartclaw/tiangong/opencode-config
 	docker compose up --build -d
 
 down:

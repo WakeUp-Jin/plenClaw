@@ -16,6 +16,7 @@ import asyncio
 import json
 import logging
 import shutil
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -68,6 +69,8 @@ class CodingAgentAdapter(ABC):
         adapters: dict[str, type[CodingAgentAdapter]] = {
             "claude_code": ClaudeCodeAdapter,
             "codex": CodexAdapter,
+            "kimi": KimiCliAdapter,
+            "opencode": OpenCodeAdapter,
         }
         cls = adapters.get(agent_type)
         if not cls:
@@ -381,3 +384,291 @@ class CodexAdapter(CodingAgentAdapter):
             parts.append(f"output={output[:300]}")
 
         return ", ".join(parts)
+
+
+class KimiCliAdapter(CodingAgentAdapter):
+    """Kimi Code CLI 适配器。
+
+    文档: https://moonshotai.github.io/kimi-cli/
+    非交互模式: kimi --print -p "prompt"
+    输出格式: --output-format stream-json (JSONL)
+    session 恢复: kimi --session <ID> --print -p "follow-up"
+
+    Session 管理策略: 调用前用 uuid4 预先生成 session_id 并通过
+    ``--session`` 传给 kimi-cli（该参数支持"不存在则创建"语义），
+    从而在整个适配器生命周期内持有确定的 session 标识。
+    """
+
+    RETRYABLE_EXIT_CODE = 75
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+        self._session_id: Optional[str] = None
+
+    @property
+    def command_name(self) -> str:
+        return "kimi"
+
+    def _build_cmd(self, prompt: str, session_id: str) -> list[str]:
+        return [
+            "kimi", "--print",
+            "--output-format", "stream-json",
+            "--session", session_id,
+            "-w", self.cwd,
+            "-p", prompt,
+        ]
+
+    async def run(self, prompt: str) -> AgentResult:
+        self._session_id = str(uuid.uuid4())
+        code, stdout, stderr = await self._exec(
+            self._build_cmd(prompt, self._session_id),
+            cwd=self.cwd,
+        )
+        return self._parse_result(code, stdout, stderr, self._session_id)
+
+    async def resume(self, message: str) -> AgentResult:
+        sid = self._session_id or str(uuid.uuid4())
+        self._session_id = sid
+        code, stdout, stderr = await self._exec(
+            self._build_cmd(message, sid),
+            cwd=self.cwd,
+        )
+        return self._parse_result(code, stdout, stderr, sid)
+
+    async def run_with_rollout(
+        self, prompt: str, rollout_path: str
+    ) -> AgentResult:
+        # kimi-cli 没有 rollout 文件机制；rollout_path 在 kimi 场景下
+        # 存储的是上次的 session_id，直接用 --session 恢复上下文。
+        session_to_resume = rollout_path or self._session_id or str(uuid.uuid4())
+        self._session_id = session_to_resume
+        code, stdout, stderr = await self._exec(
+            self._build_cmd(prompt, session_to_resume),
+            cwd=self.cwd,
+        )
+        return self._parse_result(code, stdout, stderr, session_to_resume)
+
+    @classmethod
+    def _parse_result(
+        cls, code: int, stdout: str, stderr: str, session_id: str,
+    ) -> AgentResult:
+        if code == cls.RETRYABLE_EXIT_CODE:
+            return AgentResult(
+                success=False,
+                output=stdout,
+                session_id=session_id,
+                rollout_path=session_id,
+                error=f"kimi-cli transient error (exit_code=75): {stderr or stdout}"[:500],
+            )
+        if code != 0:
+            return AgentResult(
+                success=False,
+                output=stdout,
+                session_id=session_id,
+                rollout_path=session_id,
+                error=stderr or stdout,
+            )
+
+        last_assistant_content = cls._extract_last_assistant_content(stdout)
+        return AgentResult(
+            success=True,
+            output=last_assistant_content or stdout,
+            session_id=session_id,
+            rollout_path=session_id,
+        )
+
+    @staticmethod
+    def _extract_last_assistant_content(stdout: str) -> Optional[str]:
+        """从 kimi-cli JSONL 输出中提取最后一条 assistant message 的 content。
+
+        kimi-cli ``--output-format stream-json`` 输出格式::
+
+            {"role":"assistant","content":"...","tool_calls":[...]}
+            {"role":"tool","tool_call_id":"tc_1","content":"..."}
+            {"role":"assistant","content":"最终结果文本"}
+        """
+        last_content: Optional[str] = None
+        for line in stdout.splitlines():
+            text = line.strip()
+            if not text or not text.startswith("{"):
+                continue
+            try:
+                msg = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str) and content:
+                last_content = content
+        return last_content
+
+
+class OpenCodeAdapter(CodingAgentAdapter):
+    """OpenCode CLI 适配器。
+
+    文档: https://open-code.ai/docs/en/cli
+    非交互模式: opencode run "prompt"
+    输出格式: --format json (JSONL 事件流)
+    session 恢复: opencode run --session <ID> "follow-up"
+               或 opencode run --continue "follow-up"
+
+    Session 管理策略: 从 JSONL 事件流的 step_start 事件中提取 sessionID
+    （格式 ses_XXX），用于后续 --session 恢复上下文。rollout_path 字段
+    存储 sessionID，与 KimiCliAdapter 策略一致。
+    """
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+        self._session_id: Optional[str] = None
+
+    @property
+    def command_name(self) -> str:
+        return "opencode"
+
+    async def run(self, prompt: str) -> AgentResult:
+        code, stdout, stderr = await self._exec(
+            ["opencode", "run", "--format", "json", prompt],
+            cwd=self.cwd,
+        )
+        return self._parse_result(code, stdout, stderr)
+
+    async def resume(self, message: str) -> AgentResult:
+        cmd = ["opencode", "run", "--format", "json"]
+        if self._session_id:
+            cmd.extend(["--session", self._session_id])
+        else:
+            cmd.append("--continue")
+        cmd.append(message)
+        code, stdout, stderr = await self._exec(cmd, cwd=self.cwd)
+        return self._parse_result(code, stdout, stderr)
+
+    async def run_with_rollout(
+        self, prompt: str, rollout_path: str
+    ) -> AgentResult:
+        session_to_resume = rollout_path or self._session_id
+        cmd = ["opencode", "run", "--format", "json"]
+        if session_to_resume:
+            cmd.extend(["--session", session_to_resume])
+        else:
+            cmd.append("--continue")
+        cmd.append(prompt)
+        code, stdout, stderr = await self._exec(cmd, cwd=self.cwd)
+        return self._parse_result(code, stdout, stderr)
+
+    def _parse_result(
+        self, code: int, stdout: str, stderr: str,
+    ) -> AgentResult:
+        session_id, text_parts, errors, has_tool_failure = (
+            self._inspect_jsonl_events(stdout)
+        )
+        if session_id:
+            self._session_id = session_id
+
+        if code != 0 and not text_parts:
+            return AgentResult(
+                success=False,
+                output=stdout,
+                session_id=session_id,
+                rollout_path=session_id,
+                error=self._build_error_message(errors, stderr, stdout),
+            )
+
+        if errors:
+            return AgentResult(
+                success=False,
+                output="\n".join(text_parts) or stdout,
+                session_id=session_id,
+                rollout_path=session_id,
+                error=self._build_error_message(errors, stderr, stdout),
+            )
+
+        return AgentResult(
+            success=True,
+            output="\n".join(text_parts) or stdout,
+            session_id=session_id,
+            rollout_path=session_id,
+        )
+
+    @staticmethod
+    def _inspect_jsonl_events(
+        stdout: str,
+    ) -> tuple[Optional[str], list[str], list[str], bool]:
+        """解析 OpenCode JSONL 事件流。
+
+        返回 (session_id, text_parts, errors, has_tool_failure)。
+
+        事件类型:
+        - step_start: 含 sessionID
+        - text: 模型文本输出（part.text）
+        - tool_use: 工具执行（检查 part.state.status）
+        - step_finish: 步骤结束（reason="stop" 为最终）
+        - error: 错误事件
+        """
+        session_id: Optional[str] = None
+        text_parts: list[str] = []
+        errors: list[str] = []
+        has_tool_failure = False
+
+        for line in stdout.splitlines():
+            text = line.strip()
+            if not text or not text.startswith("{"):
+                continue
+            try:
+                event = json.loads(text)
+            except json.JSONDecodeError:
+                continue
+
+            event_type = event.get("type")
+
+            if event_type == "step_start":
+                sid = event.get("sessionID")
+                if sid:
+                    session_id = sid
+                continue
+
+            if event_type == "text":
+                part = event.get("part", {})
+                content = part.get("text", "")
+                if content:
+                    text_parts.append(content)
+                continue
+
+            if event_type == "tool_use":
+                part = event.get("part", {})
+                state = part.get("state", {})
+                if state.get("status") == "failed":
+                    has_tool_failure = True
+                    tool_name = part.get("tool", "unknown")
+                    output = state.get("output", "")
+                    metadata = state.get("metadata", {})
+                    exit_code = metadata.get("exit")
+                    desc = state.get("title", "")
+                    err_parts = [f"tool={tool_name}"]
+                    if desc:
+                        err_parts.append(f"title={desc}")
+                    if exit_code is not None:
+                        err_parts.append(f"exit_code={exit_code}")
+                    if output:
+                        err_parts.append(f"output={output[:300]}")
+                    errors.append(", ".join(err_parts))
+                continue
+
+            if event_type == "error":
+                err_data = event.get("error", {})
+                err_name = err_data.get("name", "UnknownError")
+                err_msg = (err_data.get("data") or {}).get("message", "")
+                errors.append(f"{err_name}: {err_msg}" if err_msg else err_name)
+                continue
+
+        return session_id, text_parts, errors, has_tool_failure
+
+    @staticmethod
+    def _build_error_message(
+        errors: list[str], stderr: str, stdout: str,
+    ) -> str:
+        if errors:
+            return "; ".join(errors)[:500]
+        if stderr:
+            return stderr[:500]
+        return stdout[:500]

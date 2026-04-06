@@ -1,6 +1,7 @@
 # 天工容器 Dockerfile
 #
-# 包含：Rust 工具链（预热常用 crate）+ Node.js + Python
+# 包含：Rust 工具链（预热常用 crate）+ Node.js + Python + Coding Agent CLIs
+# Coding Agent: Codex (Node.js) + OpenCode (Node.js) + Kimi Code CLI (Python/uv)
 # 运行：天工调度器（巡查锻造令 → 调度 Coding Agent CLI）
 
 FROM rust:1.85-slim AS base
@@ -23,9 +24,22 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Coding Agent CLI（方案 A：仅安装 Codex） ─────
+# ── Coding Agent CLI: Codex ───────────────────────
 RUN npm install -g @openai/codex \
     && codex --version
+
+# ── Coding Agent CLI: OpenCode ───────────────────
+RUN npm install -g opencode-ai \
+    && opencode --version
+
+# uv tool 默认将可执行文件安装到 /root/.local/bin，显式加入 PATH。
+ENV PATH="/root/.local/bin:${PATH}"
+
+# ── Coding Agent CLI: Kimi Code CLI ──────────────
+# kimi-cli 是 Python 包，通过 uv 安装到独立环境
+RUN pip3 install --break-system-packages uv \
+    && uv tool install --python 3.13 kimi-cli \
+    && kimi --version
 
 # ── 预热 Rust 常用 crate ────────────────────────
 # 创建临时项目，添加常用依赖并编译一次。

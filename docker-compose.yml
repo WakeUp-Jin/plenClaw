@@ -27,4 +27,7 @@ services:
     volumes:
       - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}:/shared
       - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/codex:/root/.codex
+      - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/kimi:/root/.kimi
+      - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/opencode:/root/.local/share/opencode
+      - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/opencode-config:/root/.config/opencode
       - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/workspace:/workspace
