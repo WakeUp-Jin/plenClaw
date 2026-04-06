@@ -27,3 +27,4 @@ services:
     volumes:
       - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}:/shared
       - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/codex:/root/.codex
+      - ${HEARTCLAW_HOME:-${HOME}/.heartclaw}/tiangong/workspace:/workspace

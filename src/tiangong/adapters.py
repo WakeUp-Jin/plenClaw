@@ -31,6 +31,7 @@ class AgentResult:
     success: bool
     output: str = ""
     session_id: Optional[str] = None
+    rollout_path: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -48,6 +49,12 @@ class CodingAgentAdapter(ABC):
     @abstractmethod
     async def resume(self, message: str) -> AgentResult:
         """恢复 session 继续执行（多轮交互场景）。"""
+
+    @abstractmethod
+    async def run_with_rollout(
+        self, prompt: str, rollout_path: str
+    ) -> AgentResult:
+        """基于历史会话记录恢复上下文后执行（重锻场景）。"""
 
     @property
     @abstractmethod
@@ -177,6 +184,12 @@ class ClaudeCodeAdapter(CodingAgentAdapter):
         )
         return self._parse(code, stdout, stderr)
 
+    async def run_with_rollout(
+        self, prompt: str, rollout_path: str
+    ) -> AgentResult:
+        # Claude Code 不使用 rollout 机制，退化为 --continue
+        return await self.resume(prompt)
+
     @staticmethod
     def _parse(code: int, stdout: str, stderr: str) -> AgentResult:
         if code == 0:
@@ -236,24 +249,62 @@ class CodexAdapter(CodingAgentAdapter):
         )
         return self._parse_result(code, stdout, stderr)
 
+    async def run_with_rollout(
+        self, prompt: str, rollout_path: str
+    ) -> AgentResult:
+        code, stdout, stderr = await self._exec(
+            [
+                "codex",
+                "exec",
+                "--resume-rollout", rollout_path,
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--json",
+                prompt,
+            ],
+            cwd=self.cwd,
+        )
+        return self._parse_result(code, stdout, stderr)
+
     @classmethod
     def _parse_result(cls, code: int, stdout: str, stderr: str) -> AgentResult:
         if code != 0:
             return AgentResult(success=False, error=stderr or stdout)
 
-        failed_items, has_successful_file_change = cls._inspect_json_events(stdout)
+        failed_items, has_successful_file_change, thread_id = (
+            cls._inspect_json_events(stdout)
+        )
+
+        rollout_path: Optional[str] = None
+        if thread_id:
+            rollout_path = cls._find_rollout_path(thread_id)
+
         if failed_items and not has_successful_file_change:
             return AgentResult(
                 success=False,
                 output=stdout,
+                session_id=thread_id,
+                rollout_path=rollout_path,
                 error=cls._summarize_failed_items(failed_items),
             )
-        return AgentResult(success=True, output=stdout)
+        return AgentResult(
+            success=True,
+            output=stdout,
+            session_id=thread_id,
+            rollout_path=rollout_path,
+        )
 
     @staticmethod
-    def _inspect_json_events(stdout: str) -> tuple[list[dict], bool]:
+    def _inspect_json_events(
+        stdout: str,
+    ) -> tuple[list[dict], bool, Optional[str]]:
+        """解析 Codex JSON 事件流。
+
+        返回 (failed_items, has_successful_file_change, thread_id)。
+        thread_id 从 ``thread.started`` 事件中提取，用于定位 rollout 文件。
+        """
         failed_items: list[dict] = []
         has_successful_file_change = False
+        thread_id: Optional[str] = None
 
         for line in stdout.splitlines():
             text = line.strip()
@@ -264,7 +315,13 @@ class CodexAdapter(CodingAgentAdapter):
             except json.JSONDecodeError:
                 continue
 
-            if event.get("type") != "item.completed":
+            event_type = event.get("type")
+
+            if event_type == "thread.started":
+                thread_id = event.get("thread_id")
+                continue
+
+            if event_type != "item.completed":
                 continue
 
             item = event.get("item")
@@ -279,7 +336,33 @@ class CodexAdapter(CodingAgentAdapter):
             if item_type in {"command_execution", "file_change"} and status == "failed":
                 failed_items.append(item)
 
-        return failed_items, has_successful_file_change
+        return failed_items, has_successful_file_change, thread_id
+
+    @staticmethod
+    def _find_rollout_path(thread_id: str) -> Optional[str]:
+        """根据 thread_id 在 ~/.codex/sessions/ 下查找 rollout 文件。
+
+        Codex 将会话记录存储为:
+        ~/.codex/sessions/YYYY/MM/DD/rollout-TIMESTAMP-THREAD_ID_PREFIX.jsonl
+        文件名中包含 thread_id 的前 8 位。
+        """
+        sessions_dir = Path.home() / ".codex" / "sessions"
+        if not sessions_dir.is_dir():
+            logger.debug("Codex sessions dir not found: %s", sessions_dir)
+            return None
+
+        prefix = thread_id[:8]
+        matches = list(sessions_dir.rglob(f"*{prefix}*.jsonl"))
+        if not matches:
+            logger.warning(
+                "No rollout file found for thread_id=%s in %s",
+                thread_id, sessions_dir,
+            )
+            return None
+
+        result = str(sorted(matches)[-1])
+        logger.info("Found rollout file: %s (thread_id=%s)", result, thread_id)
+        return result
 
     @staticmethod
     def _summarize_failed_items(failed_items: list[dict]) -> str:

@@ -6,10 +6,10 @@ WORKDIR /app
 RUN pip install uv
 
 # Copy dependency file first for better caching
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies
-RUN uv pip install --system -e .
+RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .
@@ -19,4 +19,4 @@ RUN mkdir -p /app/data
 
 EXPOSE 8000
 
-CMD ["python", "main.py"]
+CMD ["uv", "run", "--no-sync", "python", "src/main.py"]

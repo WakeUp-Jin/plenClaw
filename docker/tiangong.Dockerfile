@@ -9,6 +9,7 @@ FROM rust:1.85-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
+    ripgrep \
     python3 \
     python3-pip \
     python3-venv \

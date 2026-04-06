@@ -9,6 +9,7 @@ from core.tool.tools.bash import BashTool
 from core.tool.tools.read_file import ReadFileTool
 from core.tool.tools.list_files import ListFilesTool
 from core.tool.tools.tiangong_evolve import TianGongEvolveTool
+from core.tool.tools.tiangong_feedback import TianGongFeedbackTool
 from utils.logger import get_logger
 from utils.token_counter import TokenCounter
 
@@ -122,6 +123,7 @@ class Agent:
         self._tool_manager.register(BashTool)
         self._tool_manager.register(ListFilesTool)
         self._tool_manager.register(TianGongEvolveTool)
+        self._tool_manager.register(TianGongFeedbackTool)
         logger.info("Built-in tools registered: %s", self._tool_manager.list_tools())
 
     def _handle_clear(self) -> str:
