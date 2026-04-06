@@ -116,7 +116,8 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         self._loaded_summaries.clear()
         self._intra_day_summary = ""
         self._turn_start = 0
-        logger.info("Short-term memory cleared")
+        self._storage.rotate_daily()
+        logger.info("Short-term memory cleared, new segment created")
 
     # ------------------------------------------------------------------
     # BaseContext interface
@@ -282,7 +283,11 @@ class ShortTermMemoryContext(BaseContext[ContextItem]):
         eligible.sort()
         to_compress = eligible[:7]
 
-        daily_paths = [self._storage.get_daily_path(d) for d in to_compress]
+        daily_paths = [
+            p
+            for d in to_compress
+            for p in self._storage.list_daily_segments(d)
+        ]
         summary_text = await self._compressor.compress_to_week_summary(
             daily_paths, summarize_fn,
         )
